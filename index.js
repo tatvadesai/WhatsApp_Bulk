@@ -3,14 +3,17 @@ const qrcode = require('qrcode-terminal');
 const { fetchGoogleSheetData } = require('./googleSheetsIntegration');
 
 // Allowed cities and default message template.
-const ALLOWED_CITIES = ['Ahmedabad'];
-const DEFAULT_MESSAGE_TEMPLATE = `Hi {firstName},
+const ALLOWED_CITIES = ['Vadodara', 'Ahmedabad'];
+// Add blocked numbers (make sure to use the same format as in your sheet)
+const BLOCKED_NUMBERS = ['7405900917', '9686525408'];
 
-We're setting the table for this Wednesday's GatherAround Dinner.
+const DEFAULT_MESSAGE_TEMPLATE = `Hey {firstName}! ✨  
 
-Pay Rs 99 at gather.around@ybl to confirm your spot.
+Hope you're doing great! This is Tatva from GatherAround (https://www.instagram.com/gatheraround.social/)  
 
-Just a heads-up: Prices rise to Rs. 149 on Monday.`;
+We’ve got a GatherAround dinner meetup coming up on 8th February. 🍽️
+
+Let me know if you're free, and I’ll send over the invite! 😊`;
 
 // Ensure MESSAGE_TEMPLATE is a string.
 const MESSAGE_TEMPLATE = (process.env.MESSAGE_TEMPLATE && typeof process.env.MESSAGE_TEMPLATE === 'string')
@@ -56,12 +59,13 @@ async function prepareContacts() {
     try {
         const sheetData = await fetchGoogleSheetData();
       
-        // Filter contacts for allowed cities.
+        // Filter contacts for allowed cities and exclude blocked numbers
         const filteredContacts = sheetData.filter(contact => 
-            ALLOWED_CITIES.includes(contact.city)
+            ALLOWED_CITIES.includes(contact.city) && 
+            !BLOCKED_NUMBERS.includes(contact.number.replace(/[^\d]/g, ''))
         );
       
-        // Format each contact with their name and message.
+        // Rest of the function remains the same
         const preparedContacts = filteredContacts.map(contact => {
             const firstName = (contact.firstName || '').trim();
             if (!firstName) {

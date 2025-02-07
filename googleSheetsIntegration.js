@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+require('dotenv').config();
 
 /**
  * fetchGoogleSheetData
@@ -7,15 +8,15 @@ const { google } = require('googleapis');
 async function fetchGoogleSheetData() {
   try {
     const auth = new google.auth.GoogleAuth({
-      keyFile: 'credentials.json',
+      keyFile: process.env.GOOGLE_SHEETS_CREDENTIALS_PATH || 'credentials.json',
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
     });
 
     const authClient = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-    const spreadsheetId = '1T8GIGrEqln4vKCxgy1Itb9nOLHHr8q2HylMK46wQHRc';
-    const range = 'Sheet2!A1:F'; // Adjust based on your sheet name and range
+    const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+    const range = process.env.GOOGLE_SHEET_RANGE || 'Sheet2!A1:F'; // Adjust based on your sheet name and range
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -48,4 +49,4 @@ async function fetchGoogleSheetData() {
 
 module.exports = {
   fetchGoogleSheetData,
-}; 
+};
