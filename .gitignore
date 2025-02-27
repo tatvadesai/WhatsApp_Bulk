@@ -4,6 +4,7 @@
 /credentials.json
 /service-account.json
 /.wwebjs_auth/
+/.wwebjs_cache/
 
 # Node.js files
 /node_modules/
