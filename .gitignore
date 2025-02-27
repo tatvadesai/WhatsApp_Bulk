@@ -1,25 +1,29 @@
-# Dependencies
-node_modules/
+# Security-sensitive files
+/config.js
+/.env
+/credentials.json
+/service-account.json
+/.wwebjs_auth/
 
-# Environment variables
-.env
+# Node.js files
+/node_modules/
+/package-lock.json
+npm-debug.log*
 
-# Credentials and sensitive data
-credentials.json
+# Log files
+/logs/*.log
 
-# WhatsApp session data
-.wwebjs_auth/
-.wwebjs_cache/
+# Environment files (except example)
+!.env.example
 
-# Logs
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
 *.log
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+
 

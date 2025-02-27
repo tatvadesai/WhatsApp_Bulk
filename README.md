@@ -1,98 +1,142 @@
-# WhatsApp Mass Messaging Tool
+# WhatsApp Mass Messenger
 
-A Node.js application for sending personalized WhatsApp messages to contacts from a Google Sheets database. This tool uses whatsapp-web.js for WhatsApp integration and Google Sheets API for contact management.
+A robust tool for sending personalized WhatsApp messages to multiple contacts, with support for Google Sheets and CSV data sources.
 
 ## Features
 
-- 📱 Send personalized WhatsApp messages to multiple contacts
-- 📊 Fetch contact data from Google Sheets
-- 🎯 Filter contacts by city
-- 🚫 Block list functionality
-- 💬 Customizable message templates
-- 🔒 Secure credential management
+- 🚀 Send personalized messages to multiple contacts
+- 📊 Integration with Google Sheets for contact management
+- 📁 CSV file support for offline contact processing
+- 📝 Customizable message templates with placeholders
+- 🔄 Batch processing to avoid overwhelming your device
+- ⏱️ Rate limiting to prevent WhatsApp blocking
+- 📈 Detailed logging and error handling
+- 🔍 Contact filtering by city and blocked numbers
+- 📋 Failed message tracking and reporting
 
 ## Prerequisites
 
-1. Node.js installed on your system
-2. A Google Cloud Project with Google Sheets API enabled
-3. Google Sheets API credentials (service account)
-4. WhatsApp Business account
+- Node.js (v14 or later recommended)
+- A WhatsApp account with an active phone number
+- For Google Sheets: Google Cloud Platform account with Sheets API enabled
 
-## Setup
+## Installation
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd whatsapp-mass
-```
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/your-username/whatsapp-mass-messenger.git
+   cd whatsapp-mass-messenger
+   ```
 
 2. Install dependencies:
-```bash
-npm install
-```
+   ```bash
+   npm install
+   ```
 
-3. Set up Google Sheets:
-   - Create a Google Cloud Project
-   - Enable Google Sheets API
-   - Create a service account and download credentials
-   - Save the credentials file as `credentials.json` in the project root
-   - Share your Google Sheet with the service account email
+3. Create a `.env` file from the example:
+   ```bash
+   cp .env.example .env
+   ```
 
-4. Configure environment variables:
-   - Copy `.env.example` to `.env`
-   - Update the variables in `.env` with your values:
-     - `GOOGLE_SPREADSHEET_ID`: Your Google Sheet ID
-     - `GOOGLE_SHEET_RANGE`: Sheet range (e.g., 'Sheet2!A1:F')
-     - `YOUR_NAME`: Your name
-     - `ORGANIZATION_NAME`: Your organization name
-     - `ORGANIZATION_LINK`: Your organization's link
+4. Edit the `.env` file with your configuration settings.
 
-5. Update the Google Sheet format:
-   - Required columns: firstName, lastName, email, number, city
-   - Ensure phone numbers are in international format
+5. For Google Sheets integration, place your service account credentials file in the project directory and update the `GOOGLE_APPLICATION_CREDENTIALS` path in your `.env` file.
+
+## Configuration
+
+The application can be configured using environment variables in the `.env` file:
+
+### Google Sheets Integration
+- `GOOGLE_SHEETS_ID`: Your Google Sheet ID (found in the sheet URL)
+- `GOOGLE_SHEETS_RANGE`: Range of cells to read (e.g., 'Contacts!A:E')
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to your Google service account credentials file
+
+### Message Configuration
+- `MESSAGE_TEMPLATE`: Which template to use (default, followUp, reminder, etc.)
+- Event details used in templates: `EVENT_DATE`, `EVENT_VENUE`, `EVENT_NAME`, `EVENT_TIME`
+
+### Contact Filtering
+- `ALLOWED_CITIES`: Comma-separated list of cities to include
+- `BLOCKED_NUMBERS`: Comma-separated list of phone numbers to exclude
+
+### Sending Configuration
+- `MESSAGE_DELAY`: Delay between messages in milliseconds (default: 5000)
+- `BATCH_SIZE`: Number of messages to send in each batch (default: 10)
+- `BATCH_DELAY`: Delay between batches in milliseconds (default: 30000)
+- `MAX_MESSAGES_PER_MINUTE`: Rate limiting setting (default: 30)
+- `MAX_RETRY_ATTEMPTS`: How many times to retry failed messages (default: 3)
+- `RETRY_DELAY`: Delay between retry attempts in milliseconds (default: 3000)
+
+### Application Settings
+- `DEBUG_MODE`: Enable or disable debug mode (true/false)
+- `LOG_LEVEL`: Set logging verbosity (debug, info, success, warn, error)
 
 ## Usage
 
-1. Start the application:
+### Running with Google Sheets
+
 ```bash
-node index.js
+node index.js --sheet
 ```
 
-2. Scan the QR code with WhatsApp when prompted
+### Running with a CSV file
 
-3. The application will:
-   - Fetch contacts from Google Sheets
-   - Filter contacts based on allowed cities
-   - Send personalized messages
-   - Show progress in the console
+```bash
+node index.js --csv path/to/your/contacts.csv
+```
 
-## Customization
+### Stream processing a CSV file (for large files)
 
-1. Message Template:
-   - Edit the MESSAGE_TEMPLATE in .env
-   - Use {firstName} as a placeholder for personalization
+```bash
+node index.js --stream path/to/your/contacts.csv
+```
 
-2. City Filtering:
-   - Update ALLOWED_CITIES in index.js
+## CSV File Format
 
-3. Blocked Numbers:
-   - Add numbers to BLOCKED_NUMBERS in index.js
+Your CSV file should have the following format:
 
-## Security Notes
+```
+firstName,lastName,number,city
+John,Doe,91XXXXXXXXXX,Vadodara
+Jane,Smith,91XXXXXXXXXX,Ahmedabad
+```
 
-- Never commit `.env` or `credentials.json` to version control
-- Keep your Google Sheets credentials secure
-- Regularly rotate API credentials
-- Use environment variables for sensitive data
+The column names can be varied (firstName/firstname/first_name, etc.) - the system will try to normalize them.
+
+## Message Templates
+
+Message templates are defined in `templates.js`. You can customize existing templates or add new ones.
+
+Each template can contain placeholders in the format `{placeholderName}` which will be replaced with actual values.
+
+Common placeholders:
+- `{firstName}`: Contact's first name
+- `{eventDate}`: Date of the event
+- `{venue}`: Event venue
+- `{eventName}`: Name of the event
+- `{eventTime}`: Time of the event
+
+## Output
+
+The application will generate:
+- Console output with progress information
+- Log files in the `logs` directory
+- Failed messages will be saved to CSV files in the `logs` directory for retry
+
+## Notes
+
+- When running for the first time, you'll need to scan a QR code to authenticate WhatsApp
+- Subsequent runs will use the saved session (until it expires)
+- Be aware of WhatsApp's fair usage policy - excessive messaging may result in your number being banned
+
+## License
+
+MIT
+
+## Support
+
+For any questions or issues, please open an issue on GitHub or contact the author.
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Disclaimer
-
-This tool is for legitimate business communication only. Please ensure compliance with WhatsApp's terms of service and local regulations regarding bulk messaging.

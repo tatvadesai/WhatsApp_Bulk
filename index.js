@@ -1,29 +1,32 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { fetchGoogleSheetData } = require('./googleSheetsIntegration');
+const fs = require('fs');
+const path = require('path');
 
-// Allowed cities and default message template.
-const ALLOWED_CITIES = ['Vadodara', 'Ahmedabad'];
-// Add blocked numbers (make sure to use the same format as in your sheet)
-const BLOCKED_NUMBERS = ['7405900917', '9686525408'];
+// Load configuration
+const config = require('./config');
+config.validateConfig();
 
-const DEFAULT_MESSAGE_TEMPLATE = `Hey {firstName}! ✨  
+// Import utilities
+const logger = require('./utils/logger');
+const RateLimiter = require('./utils/rateLimiter');
+const { formatMessage, prepareContactMessage } = require('./utils/messageFormatter');
+const { saveFailedContacts, streamCsvFile } = require('./utils/csvHandler');
 
-Hope you're doing great! This is Tatva from GatherAround (https://www.instagram.com/gatheraround.social/)  
+// Import services
+const { fetchGoogleSheetData, streamGoogleSheetData } = require('./googleSheetsIntegration');
+const templates = require('./templates');
 
-We’ve got a GatherAround dinner meetup coming up on 8th February. 🍽️
+// Initialize rate limiter
+const rateLimiter = new RateLimiter(
+    config.MAX_MESSAGES_PER_MINUTE,
+    60 * 1000  // 1 minute in milliseconds
+);
 
-Let me know if you're free, and I’ll send over the invite! 😊`;
-
-// Ensure MESSAGE_TEMPLATE is a string.
-const MESSAGE_TEMPLATE = (process.env.MESSAGE_TEMPLATE && typeof process.env.MESSAGE_TEMPLATE === 'string')
-  ? process.env.MESSAGE_TEMPLATE
-  : DEFAULT_MESSAGE_TEMPLATE;
-
-// Initialize the client with LocalAuth so you don't scan the QR every time.
+// Initialize the WhatsApp client
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: "client-one",
+        clientId: "whatsapp-mass-messenger",
         dataPath: './.wwebjs_auth'
     }),
     puppeteer: {
@@ -31,88 +34,400 @@ const client = new Client({
     }
 });
 
+// WhatsApp event handlers
 client.on('qr', (qr) => {
+    logger.info('Scan the QR code to log in:');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('authenticated', () => {
-    console.log('✅ WhatsApp authentication successful!');
+    logger.success('WhatsApp authentication successful!');
 });
 
 client.on('auth_failure', (error) => {
-    console.error('❌ Authentication failed:', error);
+    logger.error('WhatsApp authentication failed', error);
 });
 
 client.on('ready', async () => {
-    console.log('🚀 WhatsApp client is ready!');
-    const contacts = await prepareContacts();
-    await sendBulkMessages(contacts);
+    logger.success('WhatsApp client is ready!');
+    
+    // Choose the operation mode based on command line arguments
+    const args = process.argv.slice(2);
+    
+    if (args.includes('--csv') && args.length > args.indexOf('--csv') + 1) {
+        // CSV mode
+        const csvFilePath = args[args.indexOf('--csv') + 1];
+        await processCsvContacts(csvFilePath);
+    } else if (args.includes('--sheet')) {
+        // Google Sheets mode
+        await processGoogleSheetContacts();
+    } else if (args.includes('--stream') && args.length > args.indexOf('--stream') + 1) {
+        // Stream mode
+        const csvFilePath = args[args.indexOf('--stream') + 1];
+        await streamProcessContacts(csvFilePath);
+    } else {
+        // Default to Google Sheets mode
+        logger.info('No source specified, defaulting to Google Sheets mode');
+        await processGoogleSheetContacts();
+    }
 });
 
 client.initialize();
 
 /**
- * prepareContacts: Fetches data from Google Sheets, filters by allowed cities,
- * and formats the contact list with personalized messages.
+ * Process contacts from Google Sheets
  */
-async function prepareContacts() {
+async function processGoogleSheetContacts() {
     try {
-        const sheetData = await fetchGoogleSheetData();
-      
-        // Filter contacts for allowed cities and exclude blocked numbers
-        const filteredContacts = sheetData.filter(contact => 
-            ALLOWED_CITIES.includes(contact.city) && 
-            !BLOCKED_NUMBERS.includes(contact.number.replace(/[^\d]/g, ''))
-        );
-      
-        // Rest of the function remains the same
-        const preparedContacts = filteredContacts.map(contact => {
-            const firstName = (contact.firstName || '').trim();
-            if (!firstName) {
-                console.warn(`Skipping contact with missing first name: ${contact.number}`);
-                return null;
-            }
-            
-            return {
-                name: `${firstName} ${(contact.lastName || '').trim()}`,
-                number: contact.number,
-                message: MESSAGE_TEMPLATE.replace('{firstName}', firstName)
-            };
-        }).filter(contact => contact !== null);
-      
-        console.log(`📋 Found ${preparedContacts.length} contacts in ${ALLOWED_CITIES.join(', ')}`);
-        return preparedContacts;
+        // Fetch contacts from Google Sheets
+        const contacts = await fetchGoogleSheetData();
+        
+        // Filter contacts
+        const filteredContacts = filterContacts(contacts);
+        
+        if (filteredContacts.length === 0) {
+            logger.warn('No contacts to message after filtering');
+            return;
+        }
+        
+        // Get additional data for templates
+        const templateData = {
+            eventDate: process.env.EVENT_DATE || '1st March',
+            venue: process.env.EVENT_VENUE || 'To be announced',
+            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
+            eventTime: process.env.EVENT_TIME || '7:00 PM'
+        };
+        
+        // Prepare contacts with messages
+        const preparedContacts = prepareContacts(filteredContacts, templateData);
+        
+        // Send messages in batches
+        await sendMessageInBatches(preparedContacts);
     } catch (error) {
-        console.error('Error preparing contacts:', error);
-        return [];
+        logger.error('Error processing Google Sheet contacts', error);
     }
 }
 
 /**
- * sendBulkMessages: Iterates over contacts and sends a WhatsApp message to each.
+ * Process contacts from a CSV file
+ * @param {string} csvFilePath - Path to the CSV file
  */
-async function sendBulkMessages(contacts) {
-    console.log(`📤 Starting to send messages to ${contacts.length} contacts`);
+async function processCsvContacts(csvFilePath) {
+    try {
+        logger.info(`Processing contacts from CSV file: ${csvFilePath}`);
+        
+        // Import the CSV handler here to avoid circular dependencies
+        const { readContactsFromCsv } = require('./utils/csvHandler');
+        
+        // Read contacts from CSV
+        const contacts = await readContactsFromCsv(csvFilePath);
+        
+        // Filter contacts
+        const filteredContacts = filterContacts(contacts);
+        
+        if (filteredContacts.length === 0) {
+            logger.warn('No contacts to message after filtering');
+            return;
+        }
+        
+        // Get additional data for templates
+        const templateData = {
+            eventDate: process.env.EVENT_DATE || '1st March',
+            venue: process.env.EVENT_VENUE || 'To be announced',
+            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
+            eventTime: process.env.EVENT_TIME || '7:00 PM'
+        };
+        
+        // Prepare contacts with messages
+        const preparedContacts = prepareContacts(filteredContacts, templateData);
+        
+        // Send messages in batches
+        await sendMessageInBatches(preparedContacts);
+    } catch (error) {
+        logger.error(`Error processing CSV contacts from ${csvFilePath}`, error);
+    }
+}
 
-    for (const contact of contacts) {
-        try {
-            if (!contact.number || !contact.message) {
-                console.error(`❌ Invalid contact data: Skipping ${contact.name || 'unknown'}`);
-                continue;
+/**
+ * Stream and process contacts from a CSV file
+ * @param {string} csvFilePath - Path to the CSV file
+ */
+async function streamProcessContacts(csvFilePath) {
+    try {
+        logger.info(`Stream processing contacts from CSV file: ${csvFilePath}`);
+        
+        // Additional data for templates
+        const templateData = {
+            eventDate: process.env.EVENT_DATE || '1st March',
+            venue: process.env.EVENT_VENUE || 'To be announced',
+            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
+            eventTime: process.env.EVENT_TIME || '7:00 PM'
+        };
+        
+        let count = 0;
+        let successCount = 0;
+        let failedCount = 0;
+        const failedContacts = [];
+        
+        // Process each row in the CSV file
+        await streamCsvFile(csvFilePath, async (row) => {
+            // Check if this contact should be processed
+            if (!shouldProcessContact(row)) {
+                logger.debug(`Skipping contact: ${row.firstname || row.firstName || row.name || ''}`);
+                return;
             }
-            const number = contact.number.replace(/[^\d]/g, '');
-            if (!number) {
-                console.error(`❌ Invalid phone number for ${contact.name || 'unknown'}`);
-                continue;
+            
+            count++;
+            const contact = prepareContactMessage(row, config.MESSAGE_TEMPLATE, templateData);
+            
+            try {
+                // Send the message
+                const result = await sendMessage(contact);
+                if (result.success) {
+                    successCount++;
+                } else {
+                    failedCount++;
+                    failedContacts.push({...contact, error: result.error});
+                }
+            } catch (error) {
+                failedCount++;
+                failedContacts.push({...contact, error: error.message});
+                logger.error(`Error sending to ${contact.firstname || contact.firstName || ''}: ${error.message}`);
             }
-            const chatId = `${number}@c.us`;
-            await client.sendMessage(chatId, contact.message);
-            console.log(`✅ Message sent to ${contact.name} (${number})`);
-            // Delay of 5 seconds between messages.
-            await new Promise(resolve => setTimeout(resolve, 5000));
-        } catch (error) {
-            console.error(`❌ Error sending to ${contact.name || 'unknown'} (${contact.number || 'invalid'}): ${error.message}`);
+        });
+        
+        // Generate report
+        logger.info(`
+📊 Messaging Summary:
+✅ Successfully sent: ${successCount}
+❌ Failed: ${failedCount}
+📩 Total processed: ${count}
+        `);
+        
+        // Save failed contacts if any
+        if (failedContacts.length > 0) {
+            const failedContactsFile = await saveFailedContacts(failedContacts);
+            if (failedContactsFile) {
+                logger.info(`Failed contacts saved to: ${failedContactsFile}`);
+            }
+        }
+    } catch (error) {
+        logger.error(`Error stream processing contacts from ${csvFilePath}`, error);
+    }
+}
+
+/**
+ * Filter contacts based on allowed cities and blocked numbers
+ * @param {Array} contacts - Array of contact objects
+ * @returns {Array} Filtered contacts
+ */
+function filterContacts(contacts) {
+    const filteredContacts = contacts.filter(contact => {
+        // Normalize the contact for consistent property access
+        const normalizedContact = normalizeContact(contact);
+        
+        // Check if this contact should be processed
+        return shouldProcessContact(normalizedContact);
+    });
+    
+    logger.info(`Filtered ${contacts.length} contacts down to ${filteredContacts.length}`);
+    return filteredContacts;
+}
+
+/**
+ * Normalize contact object to handle different property naming
+ * @param {Object} contact - Contact object
+ * @returns {Object} Normalized contact object
+ */
+function normalizeContact(contact) {
+    return {
+        firstName: contact.firstname || contact.firstName || contact.first_name || '',
+        lastName: contact.lastname || contact.lastName || contact.last_name || '',
+        name: contact.name || `${contact.firstname || contact.firstName || ''} ${contact.lastname || contact.lastName || ''}`.trim(),
+        number: (contact.number || contact.phone || contact.phoneNumber || contact.phone_number || '').toString(),
+        city: contact.city || contact.location || '',
+        // Keep original properties
+        ...contact
+    };
+}
+
+/**
+ * Check if a contact should be processed based on filtering rules
+ * @param {Object} contact - Contact object
+ * @returns {boolean} Whether to process this contact
+ */
+function shouldProcessContact(contact) {
+    const normalizedContact = normalizeContact(contact);
+    
+    // Check if city is allowed (if ALLOWED_CITIES is configured)
+    if (config.ALLOWED_CITIES && config.ALLOWED_CITIES.length > 0) {
+        const contactCity = normalizedContact.city.trim();
+        if (!config.ALLOWED_CITIES.some(city => contactCity.toLowerCase() === city.toLowerCase())) {
+            return false;
         }
     }
-    console.log('✨ Bulk messaging completed!');
+    
+    // Check if number is in blocked list
+    const cleanNumber = normalizedContact.number.replace(/[^\d]/g, '');
+    if (!cleanNumber) {
+        logger.debug(`Skipping contact with missing number: ${normalizedContact.name}`);
+        return false;
+    }
+    
+    if (config.BLOCKED_NUMBERS.includes(cleanNumber)) {
+        logger.debug(`Skipping blocked number: ${cleanNumber}`);
+        return false;
+    }
+    
+    return true;
 }
+
+/**
+ * Prepare contacts with personalized messages
+ * @param {Array} contacts - Array of contact objects
+ * @param {Object} additionalData - Additional data for message templates
+ * @returns {Array} Contacts with personalized messages
+ */
+function prepareContacts(contacts, additionalData = {}) {
+    return contacts.map(contact => {
+        const normalizedContact = normalizeContact(contact);
+        return prepareContactMessage(normalizedContact, config.MESSAGE_TEMPLATE, additionalData);
+    });
+}
+
+/**
+ * Send a message to a contact
+ * @param {Object} contact - Contact object with message
+ * @returns {Object} Result object {success, error}
+ */
+async function sendMessage(contact) {
+    try {
+        // Apply rate limiting
+        await rateLimiter.throttle();
+        
+        // Clean the phone number
+        const number = contact.number.replace(/[^\d]/g, '');
+        if (!number) {
+            return { success: false, error: 'Invalid phone number' };
+        }
+        
+        // Create the WhatsApp chat ID
+        const chatId = `${number}@c.us`;
+        
+        // Try to send message with retries
+        let attempts = 0;
+        let success = false;
+        let error = null;
+        
+        while (attempts < config.MAX_RETRY_ATTEMPTS && !success) {
+            try {
+                attempts++;
+                await client.sendMessage(chatId, contact.message);
+                success = true;
+                logger.success(`Message sent to ${contact.name || contact.firstName} (${number}) after ${attempts} attempt(s)`);
+            } catch (err) {
+                error = err;
+                logger.warn(`Attempt ${attempts} failed for ${contact.name || contact.firstName}: ${err.message}`);
+                if (attempts < config.MAX_RETRY_ATTEMPTS) {
+                    await new Promise(resolve => setTimeout(resolve, config.RETRY_DELAY));
+                }
+            }
+        }
+        
+        if (!success) {
+            throw new Error(`Failed after ${attempts} attempts: ${error.message}`);
+        }
+        
+        // Wait between messages
+        await new Promise(resolve => setTimeout(resolve, config.MESSAGE_DELAY));
+        
+        return { success: true };
+    } catch (error) {
+        logger.error(`Error sending message to ${contact.name || contact.firstName}`, error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Send messages in batches to avoid overwhelming the system
+ * @param {Array} contacts - Array of contact objects with messages
+ */
+async function sendMessageInBatches(contacts) {
+    try {
+        const totalContacts = contacts.length;
+        const batchSize = config.BATCH_SIZE;
+        const totalBatches = Math.ceil(totalContacts / batchSize);
+        
+        let successCount = 0;
+        let failedCount = 0;
+        const failedContacts = [];
+        
+        logger.info(`Processing ${totalContacts} contacts in ${totalBatches} batches of ${batchSize}`);
+        
+        // Process in batches
+        for (let i = 0; i < totalContacts; i += batchSize) {
+            const batch = contacts.slice(i, i + batchSize);
+            const batchNumber = Math.floor(i / batchSize) + 1;
+            
+            logger.info(`Processing batch ${batchNumber}/${totalBatches} (contacts ${i+1}-${Math.min(i+batchSize, totalContacts)})`);
+            
+            // Process each contact in the batch
+            for (const contact of batch) {
+                try {
+                    const result = await sendMessage(contact);
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        failedCount++;
+                        failedContacts.push({...contact, error: result.error});
+                    }
+                } catch (error) {
+                    failedCount++;
+                    failedContacts.push({...contact, error: error.message});
+                    logger.error(`Error in batch ${batchNumber}, contact ${contact.name || contact.firstName}`, error);
+                }
+            }
+            
+            // If not the last batch, wait between batches
+            if (i + batchSize < totalContacts) {
+                logger.info(`Waiting ${config.BATCH_DELAY/1000} seconds before next batch...`);
+                await new Promise(resolve => setTimeout(resolve, config.BATCH_DELAY));
+            }
+        }
+        
+        // Generate report
+        logger.info(`
+📊 Messaging Summary:
+✅ Successfully sent: ${successCount}
+❌ Failed: ${failedCount}
+📩 Total: ${totalContacts}
+        `);
+        
+        // Save failed contacts if any
+        if (failedContacts.length > 0) {
+            const failedContactsFile = await saveFailedContacts(failedContacts);
+            if (failedContactsFile) {
+                logger.info(`Failed contacts saved to: ${failedContactsFile}`);
+            }
+        }
+        
+        logger.success('Bulk messaging completed!');
+    } catch (error) {
+        logger.error('Error in batch processing', error);
+    }
+}
+
+// Handle process termination gracefully
+process.on('SIGINT', async () => {
+    logger.info('Received SIGINT. Closing WhatsApp client...');
+    await client.destroy();
+    logger.info('WhatsApp client closed. Exiting...');
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    logger.info('Received SIGTERM. Closing WhatsApp client...');
+    await client.destroy();
+    logger.info('WhatsApp client closed. Exiting...');
+    process.exit(0);
+});
