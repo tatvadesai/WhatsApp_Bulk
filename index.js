@@ -30,7 +30,26 @@ const client = new Client({
         dataPath: './.wwebjs_auth'
     }),
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        headless: true,
+        defaultViewport: null
+    }
+});
+
+// Add session cleanup on start
+process.on('exit', async () => {
+    if (client) {
+        await client.destroy();
+    }
+});
+
+// Ensure single instance
+let qrDisplayed = false;
+client.on('qr', (qr) => {
+    if (!qrDisplayed) {
+        logger.info('Scan the QR code to log in:');
+        qrcode.generate(qr, { small: true });
+        qrDisplayed = true;
     }
 });
 
@@ -54,22 +73,52 @@ client.on('ready', async () => {
     // Choose the operation mode based on command line arguments
     const args = process.argv.slice(2);
     
+    // Handle template selection
+    if (args.includes('--template')) {
+        const templateIndex = args.indexOf('--template');
+        const templateName = args[templateIndex + 1];
+        if (templateName && templates[templateName]) {
+            config.MESSAGE_TEMPLATE = templateName;
+            logger.info(`Using template: ${templateName}`);
+        } else {
+            logger.warn(`Template "${templateName}" not found. Using default template.`);
+            config.MESSAGE_TEMPLATE = 'default';
+        }
+    } else {
+        logger.info(`Using template from .env: ${config.MESSAGE_TEMPLATE}`);
+    }
+    
+    // Show available templates for reference
+    logger.info(`Available templates: ${Object.keys(templates).join(', ')}`);
+    
+    // Add event details to the global additionalData object
+    const additionalData = {
+        eventDate: process.env.EVENT_DATE || 'upcoming date',
+        venue: process.env.EVENT_VENUE || 'venue to be announced',
+        eventName: process.env.EVENT_NAME || 'GatherAround Event',
+        eventTime: process.env.EVENT_TIME || '7:00 PM'
+    };
+    logger.info(`Event details: ${JSON.stringify(additionalData)}`);
+    
+    // Process based on mode
     if (args.includes('--csv') && args.length > args.indexOf('--csv') + 1) {
         // CSV mode
         const csvFilePath = args[args.indexOf('--csv') + 1];
-        await processCsvContacts(csvFilePath);
+        await processCsvContacts(csvFilePath, additionalData);
     } else if (args.includes('--sheet')) {
         // Google Sheets mode
-        await processGoogleSheetContacts();
+        await processGoogleSheetContacts(additionalData);
     } else if (args.includes('--stream') && args.length > args.indexOf('--stream') + 1) {
         // Stream mode
         const csvFilePath = args[args.indexOf('--stream') + 1];
-        await streamProcessContacts(csvFilePath);
+        await streamProcessContacts(csvFilePath, additionalData);
     } else {
         // Default to Google Sheets mode
-        logger.info('No source specified, defaulting to Google Sheets mode');
-        await processGoogleSheetContacts();
+        logger.info('No specific mode selected, defaulting to Google Sheets mode');
+        await processGoogleSheetContacts(additionalData);
     }
+    
+    logger.success('Processing complete!');
 });
 
 client.initialize();
@@ -77,7 +126,7 @@ client.initialize();
 /**
  * Process contacts from Google Sheets
  */
-async function processGoogleSheetContacts() {
+async function processGoogleSheetContacts(additionalData = {}) {
     try {
         // Fetch contacts from Google Sheets
         const contacts = await fetchGoogleSheetData();
@@ -90,16 +139,8 @@ async function processGoogleSheetContacts() {
             return;
         }
         
-        // Get additional data for templates
-        const templateData = {
-            eventDate: process.env.EVENT_DATE || '1st March',
-            venue: process.env.EVENT_VENUE || 'To be announced',
-            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
-            eventTime: process.env.EVENT_TIME || '7:00 PM'
-        };
-        
         // Prepare contacts with messages
-        const preparedContacts = prepareContacts(filteredContacts, templateData);
+        const preparedContacts = prepareContacts(filteredContacts, additionalData);
         
         // Send messages in batches
         await sendMessageInBatches(preparedContacts);
@@ -112,7 +153,7 @@ async function processGoogleSheetContacts() {
  * Process contacts from a CSV file
  * @param {string} csvFilePath - Path to the CSV file
  */
-async function processCsvContacts(csvFilePath) {
+async function processCsvContacts(csvFilePath, additionalData = {}) {
     try {
         logger.info(`Processing contacts from CSV file: ${csvFilePath}`);
         
@@ -130,16 +171,8 @@ async function processCsvContacts(csvFilePath) {
             return;
         }
         
-        // Get additional data for templates
-        const templateData = {
-            eventDate: process.env.EVENT_DATE || '1st March',
-            venue: process.env.EVENT_VENUE || 'To be announced',
-            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
-            eventTime: process.env.EVENT_TIME || '7:00 PM'
-        };
-        
         // Prepare contacts with messages
-        const preparedContacts = prepareContacts(filteredContacts, templateData);
+        const preparedContacts = prepareContacts(filteredContacts, additionalData);
         
         // Send messages in batches
         await sendMessageInBatches(preparedContacts);
@@ -152,17 +185,9 @@ async function processCsvContacts(csvFilePath) {
  * Stream and process contacts from a CSV file
  * @param {string} csvFilePath - Path to the CSV file
  */
-async function streamProcessContacts(csvFilePath) {
+async function streamProcessContacts(csvFilePath, additionalData = {}) {
     try {
         logger.info(`Stream processing contacts from CSV file: ${csvFilePath}`);
-        
-        // Additional data for templates
-        const templateData = {
-            eventDate: process.env.EVENT_DATE || '1st March',
-            venue: process.env.EVENT_VENUE || 'To be announced',
-            eventName: process.env.EVENT_NAME || 'GatherAround Dinner',
-            eventTime: process.env.EVENT_TIME || '7:00 PM'
-        };
         
         let count = 0;
         let successCount = 0;
@@ -178,7 +203,7 @@ async function streamProcessContacts(csvFilePath) {
             }
             
             count++;
-            const contact = prepareContactMessage(row, config.MESSAGE_TEMPLATE, templateData);
+            const contact = prepareContactMessage(row, templates[config.MESSAGE_TEMPLATE] || templates.default, additionalData);
             
             try {
                 // Send the message
@@ -261,8 +286,23 @@ function shouldProcessContact(contact) {
     
     // Check if city is allowed (if ALLOWED_CITIES is configured)
     if (config.ALLOWED_CITIES && config.ALLOWED_CITIES.length > 0) {
-        const contactCity = normalizedContact.city.trim();
-        if (!config.ALLOWED_CITIES.some(city => contactCity.toLowerCase() === city.toLowerCase())) {
+        const contactCity = (normalizedContact.city || '').trim().toLowerCase();
+        
+        // Skip contacts with no city if city filtering is enabled
+        if (!contactCity) {
+            logger.debug(`Skipping contact without city: ${normalizedContact.name}`);
+            return false;
+        }
+        
+        // Check if any allowed city matches (including partial matches)
+        const cityMatched = config.ALLOWED_CITIES.some(city => 
+            contactCity === city.toLowerCase() || 
+            contactCity.includes(city.toLowerCase()) ||
+            city.toLowerCase().includes(contactCity)
+        );
+        
+        if (!cityMatched) {
+            logger.debug(`Contact city "${contactCity}" not in allowed cities list: ${config.ALLOWED_CITIES.join(', ')}`);
             return false;
         }
     }
@@ -289,9 +329,16 @@ function shouldProcessContact(contact) {
  * @returns {Array} Contacts with personalized messages
  */
 function prepareContacts(contacts, additionalData = {}) {
+    // Get the template content from the configured template name
+    const templateName = config.MESSAGE_TEMPLATE;
+    const templateContent = templates[templateName] || templates.default;
+    
+    logger.info(`Using message template: ${templateName}`);
+    
+    // Prepare each contact with personalized message
     return contacts.map(contact => {
         const normalizedContact = normalizeContact(contact);
-        return prepareContactMessage(normalizedContact, config.MESSAGE_TEMPLATE, additionalData);
+        return prepareContactMessage(normalizedContact, templateContent, additionalData);
     });
 }
 

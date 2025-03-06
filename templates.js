@@ -15,7 +15,7 @@ Hope you're doing great! This is Tatva from GatherAround (https://www.instagram.
 We've got a GatherAround dinner meetup coming up on {eventDate}. 🍽️
 
 Let me know if you're free, and I'll send over the invite! 😊`,
-
+    
     // Follow-up message for people who didn't respond
     followUp: `Hi {firstName},
 
@@ -50,4 +50,4 @@ Tatva`,
     custom: `{customMessage}`
 };
 
-module.exports = templates; 
+module.exports = templates;
