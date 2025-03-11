@@ -170,6 +170,40 @@ For template changes made in `templates.js`:
 - Available placeholders: `{firstName}`, `{lastName}`, `{fullName}`, `{city}`, `{eventDate}`, `{venue}`, `{eventName}`, `{eventTime}`
 - Make sure your EVENT_* environment variables are set correctly
 
+### Browser/Puppeteer Errors
+If you encounter errors like `Execution context was destroyed` or other Puppeteer-related issues:
+
+1. **Increase timeout and retry settings** in your `.env` file:
+   ```
+   MAX_RETRY_ATTEMPTS=5
+   RETRY_DELAY=10000
+   ```
+
+2. **Try with a slower sending rate**:
+   ```
+   MESSAGE_DELAY=8000
+   BATCH_SIZE=5
+   MAX_MESSAGES_PER_MINUTE=15
+   ```
+
+3. **Restart your computer** before running the app (clears browser processes)
+
+4. **Run with a visible browser** (for debugging):
+   Add this line to your `.env` file:
+   ```
+   DEBUG_MODE=true
+   ```
+   Then add this to your `index.js` right after const client definition:
+   ```javascript
+   if (config.DEBUG_MODE) {
+     client.options.puppeteer.headless = false;
+   }
+   ```
+
+5. **Make sure WhatsApp Web works in your normal browser** first
+
+The app now has better error handling for browser issues and will automatically retry with longer delays if these errors occur.
+
 ## 🛠 Advanced Configuration
 
 ### Rate Limiting and Batch Settings

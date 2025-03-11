@@ -30,10 +30,50 @@ const client = new Client({
         dataPath: './.wwebjs_auth'
     }),
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
+        ],
         headless: true,
-        defaultViewport: null
+        defaultViewport: null,
+        timeout: 60000, // Increase timeout to 60 seconds
+        ignoreHTTPSErrors: true,
+        handleSIGINT: false
+    },
+    restartOnAuthFail: true,
+    qrMaxRetries: 3,
+    qrTimeoutMs: 60000
+});
+
+// Enable visible browser for debugging if DEBUG_MODE is true
+if (config.DEBUG_MODE) {
+    logger.info('Debug mode enabled - browser will be visible');
+    client.options.puppeteer.headless = false;
+}
+
+// Better error handling for client
+client.on('disconnected', async (reason) => {
+    logger.error(`WhatsApp client disconnected: ${reason}`);
+    logger.info('Attempting to restart client...');
+    try {
+        await client.destroy();
+        await client.initialize();
+    } catch (error) {
+        logger.error('Failed to restart client after disconnect', error);
+        process.exit(1);
     }
+});
+
+// Handle browser-related errors
+process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    // Don't exit the process, but log the error
 });
 
 // Add session cleanup on start
@@ -374,19 +414,30 @@ async function sendMessage(contact) {
                 logger.success(`Message sent to ${contact.name || contact.firstName} (${number}) after ${attempts} attempt(s)`);
             } catch (err) {
                 error = err;
-                logger.warn(`Attempt ${attempts} failed for ${contact.name || contact.firstName}: ${err.message}`);
-                if (attempts < config.MAX_RETRY_ATTEMPTS) {
+                
+                // Special handling for context destroyed errors
+                const isContextError = 
+                    err.message?.includes('Execution context was destroyed') || 
+                    err.originalMessage?.includes('Execution context was destroyed');
+                
+                if (isContextError) {
+                    logger.warn(`Puppeteer context error detected. Waiting longer before retry...`);
+                    // Wait longer for context errors
+                    await new Promise(resolve => setTimeout(resolve, config.RETRY_DELAY * 3));
+                } else {
+                    logger.warn(`Attempt ${attempts} failed for ${contact.name || contact.firstName}: ${err.message}`);
                     await new Promise(resolve => setTimeout(resolve, config.RETRY_DELAY));
                 }
             }
         }
         
         if (!success) {
-            throw new Error(`Failed after ${attempts} attempts: ${error.message}`);
+            throw new Error(`Failed after ${attempts} attempts: ${error.message || 'Unknown error'}`);
         }
         
-        // Wait between messages
-        await new Promise(resolve => setTimeout(resolve, config.MESSAGE_DELAY));
+        // Wait between messages - add random delay to reduce pattern detection
+        const randomDelay = Math.floor(config.MESSAGE_DELAY * (0.8 + Math.random() * 0.4));
+        await new Promise(resolve => setTimeout(resolve, randomDelay));
         
         return { success: true };
     } catch (error) {
