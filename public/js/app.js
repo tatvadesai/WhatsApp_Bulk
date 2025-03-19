@@ -224,10 +224,105 @@ btnLoadCsv.addEventListener('click', () => {
     });
 });
 
+// Add new button for inspecting contacts
+const btnInspectContacts = document.createElement('button');
+btnInspectContacts.id = 'btn-inspect-contacts';
+btnInspectContacts.className = 'btn btn-secondary mt-2';
+btnInspectContacts.innerHTML = '<i class="bi bi-search"></i> Inspect Contacts';
+btnInspectContacts.onclick = inspectContacts;
+
+// Insert it after filtered contacts element
+filteredContacts.parentNode.parentNode.appendChild(btnInspectContacts);
+
+// Create a modal for displaying contact data
+const contactModal = document.createElement('div');
+contactModal.className = 'modal fade';
+contactModal.id = 'contactModal';
+contactModal.tabIndex = '-1';
+contactModal.setAttribute('aria-labelledby', 'contactModalLabel');
+contactModal.setAttribute('aria-hidden', 'true');
+
+contactModal.innerHTML = `
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="contactModalLabel">Contact Data</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <input type="text" class="form-control" id="contact-search" placeholder="Search contacts...">
+        </div>
+        <pre id="contact-data" style="max-height: 400px; overflow-y: auto;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+`;
+
+document.body.appendChild(contactModal);
+
+// Function to inspect contacts
+function inspectContacts() {
+    fetch('/api/contacts/data')
+        .then(response => response.json())
+        .then(data => {
+            const contactData = document.getElementById('contact-data');
+            const contactJson = JSON.stringify(data.contacts, null, 2);
+            contactData.textContent = contactJson;
+            
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('contactModal'));
+            modal.show();
+            
+            // Setup search functionality
+            const searchInput = document.getElementById('contact-search');
+            searchInput.addEventListener('input', (e) => {
+                const searchTerm = e.target.value.toLowerCase();
+                if (!searchTerm) {
+                    contactData.textContent = contactJson;
+                    return;
+                }
+                
+                // Filter the contacts that match the search term
+                const filtered = data.contacts.filter(contact => 
+                    JSON.stringify(contact).toLowerCase().includes(searchTerm)
+                );
+                contactData.textContent = JSON.stringify(filtered, null, 2);
+            });
+        })
+        .catch(error => {
+            logActivity(`Error fetching contact data: ${error.message}`, 'error');
+        });
+}
+
+// Enhance the filter process to provide more feedback
 btnApplyFilters.addEventListener('click', () => {
-    const cities = filterCities.value.trim() ? filterCities.value.split(',').map(city => city.trim()) : [];
-    const blockedNumbers = filterBlockedNumbers.value.trim() ? filterBlockedNumbers.value.split(',').map(num => num.trim()) : [];
+    // Parse cities input, split by commas and trim each value
+    const cities = filterCities.value.trim() 
+        ? filterCities.value.split(',')
+            .map(city => city.trim())
+            .filter(city => city.length > 0) 
+        : [];
+    
+    // Parse blocked numbers, split by commas and trim each value
+    const blockedNumbers = filterBlockedNumbers.value.trim() 
+        ? filterBlockedNumbers.value.split(',')
+            .map(num => num.trim())
+            .filter(num => num.length > 0) 
+        : [];
+    
     const filterByPaidLabel = filterPaidLabel.checked;
+    
+    // Show detailed feedback that filters are being applied
+    logActivity(`Applying filters: ${cities.length ? 'Cities: ' + cities.join(', ') : 'No cities'}, ${blockedNumbers.length ? 'Blocked numbers: ' + blockedNumbers.length : 'No blocked numbers'}, Paid label: ${filterByPaidLabel ? 'Yes' : 'No'}`, 'info');
+    
+    // If no filters specified, warn the user
+    if (cities.length === 0 && blockedNumbers.length === 0 && !filterByPaidLabel) {
+        logActivity('Warning: No filters specified. All contacts will pass the filter.', 'warning');
+    }
     
     fetch('/api/contacts/filter', {
         method: 'POST',
@@ -237,13 +332,26 @@ btnApplyFilters.addEventListener('click', () => {
         body: JSON.stringify({
             cities,
             blockedNumbers,
-            filterByPaidLabel
+            filterByPaidLabel,
+            debug: true // Request detailed debug info
         })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             logActivity(`Filtered contacts: ${data.count} remaining`, 'success');
+            
+            // If they requested city filtering but got no results, show helpful message
+            if (cities.length > 0 && data.count === 0) {
+                logActivity('No contacts matched your city filters. Try checking the contact data with "Inspect Contacts" to see available city values.', 'warning');
+            }
+            
+            // Show any debug information that came back
+            if (data.debug) {
+                for (const msg of data.debug) {
+                    logActivity(`Debug: ${msg}`, 'info');
+                }
+            }
         } else {
             logActivity(`Error: ${data.error}`, 'error');
         }

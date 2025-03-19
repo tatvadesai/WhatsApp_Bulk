@@ -1,0 +1,28 @@
+2025/03/19-16:25:48.324 f203 Reusing MANIFEST /Users/tatvadesai/Desktop/Whatsapp Mass/auth_data/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/03/19-16:25:48.324 f203 Recovering log #252
+2025/03/19-16:25:48.339 f203 Reusing old log /Users/tatvadesai/Desktop/Whatsapp Mass/auth_data/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000252.log 
+2025/03/19-16:25:50.110 b303 Level-0 table #260: started
+2025/03/19-16:25:50.124 b303 Level-0 table #260: 276611 bytes OK
+2025/03/19-16:25:50.132 b303 Delete type=0 #252
+2025/03/19-16:25:50.133 b303 Manual compaction at level-0 from '\x00>\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00?\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/03/19-16:25:50.135 28e03 Level-0 table #262: started
+2025/03/19-16:25:50.138 28e03 Level-0 table #262: 445 bytes OK
+2025/03/19-16:25:50.145 28e03 Delete type=0 #259
+2025/03/19-16:25:50.150 28e03 Manual compaction at level-0 from '\x00?\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00@\x00\x00\x00' @ 0 : 0; will stop at '\x00?\x00\x00\x05' @ 1317489 : 0
+2025/03/19-16:25:50.150 28e03 Compacting 1@0 + 1@1 files
+2025/03/19-16:25:50.164 28e03 Generated table #263@0: 6163 keys, 123714 bytes
+2025/03/19-16:25:50.164 28e03 Compacted 1@0 + 1@1 files => 123714 bytes
+2025/03/19-16:25:50.170 28e03 compacted to: files[ 0 1 3 0 0 0 0 ]
+2025/03/19-16:25:50.171 28e03 Delete type=2 #262
+2025/03/19-16:25:50.171 28e03 Manual compaction at level-0 from '\x00?\x00\x00\x05' @ 1317489 : 0 .. '\x00@\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/03/19-16:25:51.904 29103 Compacting 1@1 + 3@2 files
+2025/03/19-16:25:51.943 29103 Generated table #264@1: 41497 keys, 2197761 bytes
+2025/03/19-16:25:51.990 29103 Generated table #265@1: 62768 keys, 2208578 bytes
+2025/03/19-16:25:52.007 29103 Generated table #266@1: 16795 keys, 404389 bytes
+2025/03/19-16:25:52.007 29103 Compacted 1@1 + 3@2 files => 4810728 bytes
+2025/03/19-16:25:52.014 29103 compacted to: files[ 0 0 3 0 0 0 0 ]
+2025/03/19-16:25:52.015 29103 Delete type=2 #260
+2025/03/19-16:25:52.015 29103 Delete type=2 #263
+2025/03/19-16:25:52.015 29103 Delete type=2 #255
+2025/03/19-16:25:52.015 29103 Delete type=2 #256
+2025/03/19-16:25:52.015 29103 Delete type=2 #257

@@ -232,7 +232,43 @@ app.post('/api/contacts/csv', async (req, res) => {
     }
 });
 
-// Filter contacts
+// Add a new API endpoint to get contact data
+app.get('/api/contacts/data', (req, res) => {
+    try {
+        if (!contactService) {
+            return res.status(500).json({ error: 'Services not initialized' });
+        }
+        
+        // Get all contacts
+        const allContacts = contactService.getContacts(false);
+        
+        // For security and bandwidth reasons, limit to the first 20 contacts
+        // and remove sensitive fields
+        const limitedContacts = allContacts.slice(0, 20).map(contact => {
+            // Create a sanitized version of the contact
+            const sanitized = { ...contact };
+            
+            // Remove any potentially sensitive fields
+            delete sanitized.password;
+            delete sanitized.token;
+            delete sanitized.authToken;
+            
+            return sanitized;
+        });
+        
+        res.json({ 
+            success: true, 
+            count: allContacts.length,
+            contacts: limitedContacts,
+            note: allContacts.length > 20 ? 'Showing first 20 contacts only' : ''
+        });
+    } catch (error) {
+        logger.error('Error getting contact data:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Filter contacts - enhance to support debug mode
 app.post('/api/contacts/filter', async (req, res) => {
     try {
         if (!contactService) {
@@ -240,8 +276,47 @@ app.post('/api/contacts/filter', async (req, res) => {
         }
         
         const options = req.body;
+        logger.info(`Received filter request: ${JSON.stringify(options)}`);
+        
+        // Process options to ensure proper format
+        if (options.cities && Array.isArray(options.cities)) {
+            // Remove empty strings and trim values
+            options.cities = options.cities
+                .map(city => city.trim())
+                .filter(city => city.length > 0);
+                
+            if (options.cities.length > 0) {
+                logger.info(`Filtering by cities: ${options.cities.join(', ')}`);
+            }
+        }
+        
+        if (options.blockedNumbers && Array.isArray(options.blockedNumbers)) {
+            // Clean up blocked numbers
+            options.blockedNumbers = options.blockedNumbers
+                .map(num => num.trim())
+                .filter(num => num.length > 0);
+        }
+        
+        // Enable debug mode if requested
+        const debugMode = options.debug === true;
+        if (debugMode) {
+            logger.info('Debug mode enabled for filtering');
+            options.debugMessages = [];
+        }
+        
         const filtered = await contactService.filterContacts(options);
-        res.json({ success: true, count: filtered.length });
+        
+        // Return debug information if requested
+        const response = { 
+            success: true, 
+            count: filtered.length 
+        };
+        
+        if (debugMode && options.debugMessages) {
+            response.debug = options.debugMessages;
+        }
+        
+        res.json(response);
     } catch (error) {
         logger.error('Error filtering contacts:', error);
         res.status(500).json({ error: error.message });
