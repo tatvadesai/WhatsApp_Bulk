@@ -37,27 +37,49 @@ function formatMessage(templateContent, data) {
  */
 function prepareContactMessage(contact, templateContent, additionalData = {}) {
     try {
+        logger.debug(`Preparing message for contact: ${JSON.stringify(contact)}`);
+        logger.debug(`Using template: ${templateContent.substring(0, 30)}...`);
+        logger.debug(`Additional data: ${JSON.stringify(additionalData)}`);
+        
         // Create data object with contact properties and additional data
         const messageData = {
             firstName: contact.firstname || contact.firstName || '',
             lastName: contact.lastname || contact.lastName || '',
             fullName: (contact.firstname || contact.firstName || '') + ' ' + (contact.lastname || contact.lastName || ''),
             city: contact.city || '',
+            // Include default event data
+            eventDate: process.env.EVENT_DATE || 'TBD',
+            eventName: process.env.EVENT_NAME || 'our event',
+            eventTime: process.env.EVENT_TIME || 'TBD',
+            venue: process.env.EVENT_VENUE || 'TBD',
             ...contact,
             ...additionalData
         };
         
+        // For custom templates, directly return the custom message if provided
+        if (templateContent === templates.custom && messageData.customMessage) {
+            logger.info(`Using custom message: "${messageData.customMessage.substring(0, 30)}..."`);
+            return {
+                ...contact,
+                message: messageData.customMessage
+            };
+        }
+        
         // Format the message
         const formattedMessage = formatMessage(templateContent, messageData);
+        logger.debug(`Formatted message: ${formattedMessage.substring(0, 50)}...`);
         
-        // Return contact with the formatted message
+        // Return the contact object with the formatted message
         return {
             ...contact,
             message: formattedMessage
         };
     } catch (error) {
         logger.error(`Error preparing message for contact: ${contact.firstname || contact.firstName || 'unknown'}`, error);
-        return contact;
+        return {
+            ...contact,
+            message: "Sorry, there was an error preparing your message."
+        };
     }
 }
 

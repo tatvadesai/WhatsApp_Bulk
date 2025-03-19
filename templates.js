@@ -8,13 +8,15 @@
  */
 const templates = {
     // Default dinner meetup invitation
-    default: `Hey {firstName}! ✨  
+    default: `Hi {firstName}! 🌟
 
-Hope you're doing great! This is Tatva from GatherAround (https://www.instagram.com/gatheraround.social/)  
+Tatva here from GatherAround (https://www.instagram.com/gatheraround.social/)—I hope this message finds you well!
 
-We've got a GatherAround dinner meetup coming up on {eventDate}. 🍽️
+Just wanted to share that we’re organizing a dinner meetup on {eventDate} and thought you might be interested. 🥂
 
-Let me know if you're free, and I'll send over the invite! 😊`,
+Would love to have you join us if you’re available! Let me know, and I’ll share all the details. 😊
+
+`,
     
     // Follow-up message for people who didn't respond
     followUp: `Hi {firstName},

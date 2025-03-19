@@ -23,6 +23,213 @@ const rateLimiter = new RateLimiter(
     60 * 1000  // 1 minute in milliseconds
 );
 
+// Variable to store paid label
+let paidLabel = null;
+
+// Function to fetch and cache the "paid" label
+async function getPaidLabel() {
+    if (paidLabel) return paidLabel;
+    
+    try {
+        const labels = await client.getLabels();
+        logger.info(`Found ${labels.length} labels in WhatsApp Business`);
+        
+        // Use the configured label name from config
+        const configuredLabelName = config.PAID_LABEL_NAME || 'paid';
+        logger.info(`Looking for label with name: "${configuredLabelName}" (case sensitive)`);
+        
+        // Print all available labels for debugging with exact formatting
+        if (labels.length > 0) {
+            logger.info(`Available labels (exact spelling and capitalization): ${labels.map(l => `"${l.name}"`).join(', ')}`);
+        } else {
+            logger.warn('No labels found in WhatsApp Business. You need to create labels first.');
+            return null;
+        }
+        
+        // First try exact match (preserving case) - this is most reliable
+        let exactMatch = labels.find(label => label.name === configuredLabelName);
+        if (exactMatch) {
+            logger.success(`Found exact match for label: "${exactMatch.name}"`);
+            paidLabel = exactMatch;
+            return paidLabel;
+        }
+        
+        // Next try specific variations in capitalization (Paid, PAID, paid)
+        const capitalVariations = [
+            configuredLabelName.toUpperCase(),                   // "PAID"
+            configuredLabelName.toLowerCase(),                   // "paid"
+            configuredLabelName[0].toUpperCase() + configuredLabelName.slice(1).toLowerCase() // "Paid"
+        ];
+        
+        for (const variation of capitalVariations) {
+            const matchedLabel = labels.find(label => label.name === variation);
+            if (matchedLabel) {
+                logger.info(`Found capital variation match: "${matchedLabel.name}"`);
+                paidLabel = matchedLabel;
+                return paidLabel;
+            }
+        }
+        
+        // Finally try case-insensitive contains 
+        logger.info(`No exact match found, trying case-insensitive matching...`);
+        const caseInsensitiveMatch = labels.find(label => 
+            label.name.toLowerCase() === configuredLabelName.toLowerCase() || 
+            label.name.toLowerCase().includes(configuredLabelName.toLowerCase()) ||
+            configuredLabelName.toLowerCase().includes(label.name.toLowerCase())
+        );
+        
+        if (caseInsensitiveMatch) {
+            logger.info(`Found partial case-insensitive match: "${caseInsensitiveMatch.name}"`);
+            paidLabel = caseInsensitiveMatch;
+            return paidLabel;
+        }
+        
+        logger.error(`No "${configuredLabelName}" label found in WhatsApp Business. Available labels: ${labels.map(l => `"${l.name}"`).join(', ')}`);
+        logger.error('Please create this label first in WhatsApp Business or update PAID_LABEL_NAME in your .env file');
+        logger.info('For example: PAID_LABEL_NAME=Paid (match the exact capitalization used in WhatsApp)');
+        return null;
+    } catch (error) {
+        logger.error('Error fetching WhatsApp Business labels:', error);
+        // If debug mode is enabled, show more details
+        if (config.DEBUG_MODE) {
+            logger.debug(`Error details: ${error.stack || error.message}`);
+        }
+        return null;
+    }
+}
+
+// Function to filter contacts with the "paid" label
+async function filterPaidContacts(contacts) {
+    // Check if filtering by paid label is disabled in config
+    if (!config.FILTER_BY_PAID_LABEL) {
+        logger.info('Filtering by paid label is disabled in config, skipping label filter');
+        return contacts;
+    }
+
+    const label = await getPaidLabel();
+    if (!label) {
+        logger.warn('Cannot filter for paid contacts - no paid label found');
+        return contacts;
+    }
+    
+    try {
+        // Log more info about the contacts we're trying to filter
+        logger.info(`Starting filtering of ${contacts.length} contacts using label: "${label.name}"`);
+        if (contacts.length > 0) {
+            const sampleContact = contacts[0];
+            logger.debug(`Sample contact format: ${JSON.stringify(sampleContact)}`);
+        }
+        
+        // Get all chats with the "paid" label
+        const paidChats = await label.getChats();
+        logger.info(`Found ${paidChats.length} chats with "${label.name}" label (ID: ${label.id})`);
+        
+        if (paidChats.length === 0) {
+            logger.warn(`No chats found with the "${label.name}" label. Make sure you have applied this label to chats in WhatsApp Business.`);
+            return [];
+        }
+        
+        // Create a map of phone numbers from the paid chats for faster lookup
+        const paidPhoneNumbers = new Set();
+        const paidPhoneVariants = new Map(); // Map to store all variants of each number
+        
+        for (const chat of paidChats) {
+            try {
+                // Extract the phone number from the chat ID
+                if (chat.id && chat.id._serialized) {
+                    // Chat IDs are in format "1234567890@c.us" or similar
+                    const chatNumber = chat.id._serialized.split('@')[0];
+                    if (chatNumber) {
+                        // Clean the chat number to match our contact number cleaning format
+                        const cleanChatNumber = chatNumber.toString().replace(/[^\d]/g, '');
+                        paidPhoneNumbers.add(cleanChatNumber);
+                        
+                        // Store this number and some potential variants for matching
+                        paidPhoneVariants.set(cleanChatNumber, true);
+                        
+                        // Add common variants (with/without country code)
+                        // If number starts with country code (like 91 for India), store version without it
+                        if (cleanChatNumber.length > 10) {
+                            // Try removing first digit (some country codes are single digit)
+                            paidPhoneVariants.set(cleanChatNumber.substring(1), true);
+                            
+                            // Try removing first two digits (many country codes are two digits)
+                            paidPhoneVariants.set(cleanChatNumber.substring(2), true);
+                            
+                            // Try last 10 digits (standard phone number length in many countries)
+                            if (cleanChatNumber.length >= 10) {
+                                paidPhoneVariants.set(cleanChatNumber.substring(cleanChatNumber.length - 10), true);
+                            }
+                        }
+                        
+                        logger.debug(`Added paid number from chat: ${cleanChatNumber} (original: ${chatNumber})`);
+                    }
+                }
+            } catch (error) {
+                logger.debug(`Error extracting number from chat: ${error.message}`);
+                continue;
+            }
+        }
+        
+        logger.info(`Extracted ${paidPhoneNumbers.size} unique phone numbers from labeled chats`);
+        logger.info(`Generated ${paidPhoneVariants.size} total phone number variants for matching`);
+        
+        // For debugging - log the first few numbers in the set
+        if (paidPhoneNumbers.size > 0) {
+            const numbersArray = Array.from(paidPhoneNumbers);
+            const sampleSize = Math.min(5, numbersArray.length);
+            logger.debug(`Sample of paid numbers: ${numbersArray.slice(0, sampleSize).join(', ')}${numbersArray.length > sampleSize ? '...' : ''}`);
+        }
+        
+        // Filter contacts that have their number in the paid phone numbers set
+        const filteredContacts = contacts.filter(contact => {
+            // Clean the number to ensure consistent format
+            const cleanNumber = contact.number.toString().replace(/[^\d]/g, '');
+            
+            // Try basic match first
+            let isMatch = paidPhoneVariants.has(cleanNumber);
+            
+            // If no match, try variants of this number too
+            if (!isMatch) {
+                // Create variants of the contact number
+                if (cleanNumber.length > 10) {
+                    // Try without first digit
+                    isMatch = isMatch || paidPhoneVariants.has(cleanNumber.substring(1));
+                    
+                    // Try without first two digits
+                    isMatch = isMatch || paidPhoneVariants.has(cleanNumber.substring(2));
+                }
+                
+                // Try just the last 10 digits
+                if (cleanNumber.length >= 10) {
+                    isMatch = isMatch || paidPhoneVariants.has(
+                        cleanNumber.substring(cleanNumber.length - 10)
+                    );
+                }
+            }
+            
+            if (isMatch) {
+                logger.debug(`Match found for contact: ${contact.name || contact.firstName}, number: ${cleanNumber}`);
+            }
+            
+            return isMatch;
+        });
+        
+        logger.info(`Filtered ${filteredContacts.length} contacts with "${label.name}" label out of ${contacts.length} total contacts`);
+        
+        if (filteredContacts.length === 0) {
+            logger.warn(`No contacts matched with the "${label.name}" label after filtering. 
+            Check that your contact numbers in the CSV/Sheet match exactly with the numbers in WhatsApp.`);
+        }
+        
+        return filteredContacts;
+    } catch (error) {
+        logger.error('Error filtering contacts by paid label:', error);
+        logger.warn('Returning all contacts without label filtering due to error');
+        return contacts;
+    }
+}
+
 // Initialize the WhatsApp client
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -51,11 +258,9 @@ const client = new Client({
     qrTimeoutMs: 60000
 });
 
-// Enable visible browser for debugging if DEBUG_MODE is true
-if (config.DEBUG_MODE) {
-    logger.info('Debug mode enabled - browser will be visible');
-    client.options.puppeteer.headless = false;
-}
+// Force headless mode
+client.options.puppeteer.headless = true;
+logger.info('Running in headless mode - terminal only');
 
 // Better error handling for client
 client.on('disconnected', async (reason) => {
@@ -86,17 +291,20 @@ process.on('exit', async () => {
 // Ensure single instance
 let qrDisplayed = false;
 client.on('qr', (qr) => {
-    if (!qrDisplayed) {
-        logger.info('Scan the QR code to log in:');
-        qrcode.generate(qr, { small: true });
-        qrDisplayed = true;
-    }
-});
-
-// WhatsApp event handlers
-client.on('qr', (qr) => {
-    logger.info('Scan the QR code to log in:');
-    qrcode.generate(qr, { small: true });
+    // Print clear instructions and make the QR code stand out
+    console.clear(); // Clear the terminal for better visibility
+    console.log('\n\n');
+    console.log('='.repeat(60));
+    console.log('SCAN THIS QR CODE WITH YOUR WHATSAPP TO LOGIN:');
+    console.log('='.repeat(60));
+    console.log('\n');
+    qrcode.generate(qr, { small: false }); // Use larger QR code for better readability
+    console.log('\n');
+    console.log('='.repeat(60));
+    console.log('After scanning, the app will continue automatically.');
+    console.log('='.repeat(60));
+    
+    qrDisplayed = true;
 });
 
 client.on('authenticated', () => {
@@ -107,11 +315,62 @@ client.on('auth_failure', (error) => {
     logger.error('WhatsApp authentication failed', error);
 });
 
+client.on('loading_screen', (percent, message) => {
+    logger.info(`Loading WhatsApp: ${percent}% - ${message}`);
+});
+
 client.on('ready', async () => {
     logger.success('WhatsApp client is ready!');
     
+    // Verify label functionality first if we're filtering by label
+    if (config.FILTER_BY_PAID_LABEL) {
+        const label = await getPaidLabel();
+        if (!label) {
+            logger.error('WARNING: Label filtering is enabled but no matching label was found!');
+            logger.warn('The app will continue, but no contacts will be filtered by label.');
+            logger.warn('Please check your WhatsApp Business app and ensure the label exists.');
+            
+            // Prompt the user to decide whether to continue
+            logger.warn('If you want to continue without label filtering, set FILTER_BY_PAID_LABEL=false in your .env file');
+            logger.warn('or restart with the --no-label-filter flag.');
+            
+            // Check if we're running with the --no-label-filter flag
+            const args = process.argv.slice(2);
+            if (args.includes('--no-label-filter')) {
+                logger.info('Continuing without label filtering as --no-label-filter flag was provided');
+                config.FILTER_BY_PAID_LABEL = false;
+            } else {
+                logger.warn('Continuing with label filtering enabled, but this may result in no contacts being messaged');
+            }
+        } else {
+            logger.success(`Successfully connected to WhatsApp and found label: "${label.name}"`);
+            
+            // Try to fetch some chats with this label to verify it's working
+            try {
+                const labeledChats = await label.getChats();
+                logger.info(`Found ${labeledChats.length} chats with the "${label.name}" label`);
+                
+                if (labeledChats.length > 0) {
+                    logger.success('Label filtering should work correctly!');
+                } else {
+                    logger.warn(`No chats found with the "${label.name}" label. Make sure you've applied this label to chats in WhatsApp.`);
+                }
+            } catch (error) {
+                logger.error(`Error verifying label chats: ${error.message}`);
+            }
+        }
+    } else {
+        logger.info('Label filtering is disabled in config');
+    }
+    
     // Choose the operation mode based on command line arguments
     const args = process.argv.slice(2);
+    
+    // Process command-line flags first
+    if (args.includes('--no-label-filter')) {
+        logger.info('Label filtering disabled via command line flag');
+        config.FILTER_BY_PAID_LABEL = false;
+    }
     
     // Handle template selection
     if (args.includes('--template')) {
@@ -141,7 +400,10 @@ client.on('ready', async () => {
     logger.info(`Event details: ${JSON.stringify(additionalData)}`);
     
     // Process based on mode
-    if (args.includes('--csv') && args.length > args.indexOf('--csv') + 1) {
+    if (args.includes('--test-labels')) {
+        // Label testing mode
+        await testLabelFunctionality();
+    } else if (args.includes('--csv') && args.length > args.indexOf('--csv') + 1) {
         // CSV mode
         const csvFilePath = args[args.indexOf('--csv') + 1];
         await processCsvContacts(csvFilePath, additionalData);
@@ -161,6 +423,59 @@ client.on('ready', async () => {
     logger.success('Processing complete!');
 });
 
+/**
+ * Test the label functionality
+ */
+async function testLabelFunctionality() {
+    try {
+        logger.info('Testing label functionality...');
+        
+        // Get the paid label
+        const label = await getPaidLabel();
+        if (!label) {
+            logger.error('Label test failed: No matching label found');
+            return;
+        }
+        
+        logger.success(`Found label: "${label.name}" with ID ${label.id}`);
+        
+        // Get chats with this label
+        const labeledChats = await label.getChats();
+        logger.info(`Found ${labeledChats.length} chats with the "${label.name}" label`);
+        
+        if (labeledChats.length === 0) {
+            logger.warn('No chats found with this label. Please apply the label to some chats in WhatsApp first.');
+            return;
+        }
+        
+        // Extract and display sample phone numbers
+        const phoneNumbers = new Set();
+        for (const chat of labeledChats) {
+            try {
+                if (chat.id && chat.id._serialized) {
+                    const number = chat.id._serialized.split('@')[0];
+                    const cleanNumber = number.replace(/[^\d]/g, '');
+                    phoneNumbers.add(cleanNumber);
+                }
+            } catch (error) {
+                logger.debug(`Error extracting number from chat: ${error.message}`);
+            }
+        }
+        
+        logger.info(`Extracted ${phoneNumbers.size} unique phone numbers from labeled chats`);
+        
+        if (phoneNumbers.size > 0) {
+            const numbersArray = Array.from(phoneNumbers);
+            const sampleSize = Math.min(5, numbersArray.length);
+            logger.info(`Sample phone numbers: ${numbersArray.slice(0, sampleSize).join(', ')}${numbersArray.length > sampleSize ? '...' : ''}`);
+        }
+        
+        logger.success('Label functionality test completed');
+    } catch (error) {
+        logger.error('Error testing label functionality:', error);
+    }
+}
+
 client.initialize();
 
 /**
@@ -171,7 +486,7 @@ async function processGoogleSheetContacts(additionalData = {}) {
         // Fetch contacts from Google Sheets
         const contacts = await fetchGoogleSheetData();
         
-        // Filter contacts
+        // Filter contacts based on city, blocked numbers, etc.
         const filteredContacts = filterContacts(contacts);
         
         if (filteredContacts.length === 0) {
@@ -179,8 +494,18 @@ async function processGoogleSheetContacts(additionalData = {}) {
             return;
         }
         
+        // Filter contacts with "paid" label
+        const paidContacts = await filterPaidContacts(filteredContacts);
+        
+        if (paidContacts.length === 0) {
+            logger.warn('No contacts with "paid" label found after filtering');
+            return;
+        }
+        
+        logger.info(`Found ${paidContacts.length} contacts with "paid" label out of ${filteredContacts.length} filtered contacts`);
+        
         // Prepare contacts with messages
-        const preparedContacts = prepareContacts(filteredContacts, additionalData);
+        const preparedContacts = prepareContacts(paidContacts, additionalData);
         
         // Send messages in batches
         await sendMessageInBatches(preparedContacts);
@@ -203,7 +528,7 @@ async function processCsvContacts(csvFilePath, additionalData = {}) {
         // Read contacts from CSV
         const contacts = await readContactsFromCsv(csvFilePath);
         
-        // Filter contacts
+        // Filter contacts based on city, blocked numbers, etc.
         const filteredContacts = filterContacts(contacts);
         
         if (filteredContacts.length === 0) {
@@ -211,8 +536,18 @@ async function processCsvContacts(csvFilePath, additionalData = {}) {
             return;
         }
         
+        // Filter contacts with "paid" label
+        const paidContacts = await filterPaidContacts(filteredContacts);
+        
+        if (paidContacts.length === 0) {
+            logger.warn('No contacts with "paid" label found after filtering');
+            return;
+        }
+        
+        logger.info(`Found ${paidContacts.length} contacts with "paid" label out of ${filteredContacts.length} filtered contacts`);
+        
         // Prepare contacts with messages
-        const preparedContacts = prepareContacts(filteredContacts, additionalData);
+        const preparedContacts = prepareContacts(paidContacts, additionalData);
         
         // Send messages in batches
         await sendMessageInBatches(preparedContacts);
@@ -229,55 +564,118 @@ async function streamProcessContacts(csvFilePath, additionalData = {}) {
     try {
         logger.info(`Stream processing contacts from CSV file: ${csvFilePath}`);
         
+        // If we're filtering by paid label, we'll need to get the label first
+        if (config.FILTER_BY_PAID_LABEL) {
+            const label = await getPaidLabel();
+            if (!label) {
+                logger.error('Cannot proceed with stream processing - paid label not found');
+                return;
+            }
+            logger.info(`Will filter by "${label.name}" label during stream processing`);
+        }
+        
         let count = 0;
         let successCount = 0;
         let failedCount = 0;
         const failedContacts = [];
         
-        // Process each row in the CSV file
-        await streamCsvFile(csvFilePath, async (row) => {
-            // Check if this contact should be processed
-            if (!shouldProcessContact(row)) {
-                logger.debug(`Skipping contact: ${row.firstname || row.firstName || row.name || ''}`);
+        // Create a temporary array to hold contacts for paid label filtering
+        const tempContacts = [];
+        const batchSize = Math.min(25, config.BATCH_SIZE * 3); // Use a reasonable batch size
+        
+        // Stream and process contacts
+        await streamCsvFile(csvFilePath, async (contact) => {
+            count++;
+            
+            // Normalize contact fields
+            const normalizedContact = normalizeContact(contact);
+            
+            // Check if contact should be processed
+            if (!shouldProcessContact(normalizedContact)) {
                 return;
             }
             
-            count++;
-            const contact = prepareContactMessage(row, templates[config.MESSAGE_TEMPLATE] || templates.default, additionalData);
+            // Add to temporary array for batch filtering
+            tempContacts.push(normalizedContact);
             
-            try {
-                // Send the message
-                const result = await sendMessage(contact);
-                if (result.success) {
-                    successCount++;
-                } else {
-                    failedCount++;
-                    failedContacts.push({...contact, error: result.error});
+            // Process in small batches to avoid memory issues
+            if (tempContacts.length >= batchSize) {
+                // Filter for paid contacts
+                const paidBatch = await filterPaidContacts([...tempContacts]);
+                logger.info(`Batch filtering: Found ${paidBatch.length} paid contacts out of ${tempContacts.length}`);
+                
+                // Clear temp array
+                tempContacts.length = 0;
+                
+                if (paidBatch.length > 0) {
+                    // Process the paid contacts
+                    for (const paidContact of paidBatch) {
+                        // Format message for the contact
+                        const contactWithMessage = prepareContactMessage(
+                            paidContact, 
+                            templates[config.MESSAGE_TEMPLATE] || templates.default,
+                            additionalData
+                        );
+                        
+                        // Send message
+                        const result = await sendMessage(contactWithMessage);
+                        
+                        if (result.success) {
+                            successCount++;
+                        } else {
+                            failedCount++;
+                            failedContacts.push({
+                                ...paidContact,
+                                error: result.error
+                            });
+                        }
+                    }
                 }
-            } catch (error) {
-                failedCount++;
-                failedContacts.push({...contact, error: error.message});
-                logger.error(`Error sending to ${contact.firstname || contact.firstName || ''}: ${error.message}`);
             }
         });
         
-        // Generate report
-        logger.info(`
-📊 Messaging Summary:
-✅ Successfully sent: ${successCount}
-❌ Failed: ${failedCount}
-📩 Total processed: ${count}
-        `);
-        
-        // Save failed contacts if any
-        if (failedContacts.length > 0) {
-            const failedContactsFile = await saveFailedContacts(failedContacts);
-            if (failedContactsFile) {
-                logger.info(`Failed contacts saved to: ${failedContactsFile}`);
+        // Process any remaining contacts
+        if (tempContacts.length > 0) {
+            logger.info(`Processing remaining ${tempContacts.length} contacts`);
+            
+            // Filter for paid contacts
+            const paidBatch = await filterPaidContacts([...tempContacts]);
+            logger.info(`Final batch: Found ${paidBatch.length} paid contacts out of ${tempContacts.length}`);
+            
+            if (paidBatch.length > 0) {
+                // Process the paid contacts
+                for (const paidContact of paidBatch) {
+                    // Format message for the contact
+                    const contactWithMessage = prepareContactMessage(
+                        paidContact, 
+                        templates[config.MESSAGE_TEMPLATE] || templates.default,
+                        additionalData
+                    );
+                    
+                    // Send message
+                    const result = await sendMessage(contactWithMessage);
+                    
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        failedCount++;
+                        failedContacts.push({
+                            ...paidContact,
+                            error: result.error
+                        });
+                    }
+                }
             }
         }
+        
+        // Save failed contacts to a file
+        if (failedContacts.length > 0) {
+            await saveFailedContacts(failedContacts, csvFilePath);
+        }
+        
+        logger.info(`Stream processing complete. Total: ${count}, Success: ${successCount}, Failed: ${failedCount}`);
     } catch (error) {
-        logger.error(`Error stream processing contacts from ${csvFilePath}`, error);
+        logger.error(`Error stream processing CSV contacts from ${csvFilePath}`, error);
     }
 }
 
@@ -348,13 +746,14 @@ function shouldProcessContact(contact) {
     }
     
     // Check if number is in blocked list
-    const cleanNumber = normalizedContact.number.replace(/[^\d]/g, '');
+    const cleanNumber = (normalizedContact.number || '').replace(/[^\d]/g, '');
     if (!cleanNumber) {
         logger.debug(`Skipping contact with missing number: ${normalizedContact.name}`);
         return false;
     }
     
-    if (config.BLOCKED_NUMBERS.includes(cleanNumber)) {
+    if (config.BLOCKED_NUMBERS && config.BLOCKED_NUMBERS.length > 0 && 
+        config.BLOCKED_NUMBERS.includes(cleanNumber)) {
         logger.debug(`Skipping blocked number: ${cleanNumber}`);
         return false;
     }

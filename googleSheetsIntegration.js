@@ -54,18 +54,30 @@ async function fetchGoogleSheetData() {
             return [];
         }
         
+        // Log the headers to debug
+        logger.debug(`Raw headers from sheet: ${JSON.stringify(rows[0])}`);
+        
         const headers = rows[0].map(header => header.toLowerCase().trim().replace(/\s+/g, ''));
         
+        // Log processed headers
+        logger.debug(`Processed headers: ${JSON.stringify(headers)}`);
+        
         // Convert the rows to objects using the headers as keys
-        const contacts = rows.slice(1).map(row => {
+        const contacts = rows.slice(1).map((row, index) => {
             const contact = {};
-            headers.forEach((header, index) => {
-                if (index < row.length) {
-                    contact[header] = row[index] || '';
+            headers.forEach((header, colIndex) => {
+                if (colIndex < row.length) {
+                    contact[header] = row[colIndex] || '';
                 } else {
                     contact[header] = '';
                 }
             });
+            
+            // Log the first few contacts for debugging
+            if (index < 2) {
+                logger.debug(`Contact ${index+1}: ${JSON.stringify(contact)}`);
+            }
+            
             return contact;
         });
         

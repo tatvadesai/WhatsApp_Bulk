@@ -160,10 +160,31 @@ For template changes made in `templates.js`:
 - If using Google Sheets, make sure the 'city' column exists and has values
 
 ### Messages Not Sending?
-- Make sure you've authenticated WhatsApp Web by scanning the QR code
-- Phone numbers must include country code (e.g., 919876543210)
-- Check your internet connection
-- Check that you're not being rate limited by WhatsApp
+
+If you're experiencing issues with messages not being sent, try these steps:
+
+1. **Check the contact data**:
+   - Make sure your Google Sheet has a column named `number`, `phone`, `phonenumber`, or similar
+   - Phone numbers should include country code (e.g., 919876543210) or be 10 digits (the system will add '91' prefix)
+   - Verify that the phone numbers are valid WhatsApp numbers
+
+2. **Enable Debug Mode**:
+   - Open your `.env` file and set `DEBUG_MODE=true`
+   - Also set `LOG_LEVEL=debug`
+   - Restart the server
+   - Check the logs for detailed information about what's happening
+
+3. **Try Sending to All Contacts**:
+   - The "Send to ALL Contacts" button bypasses most filtering and will send to all contacts
+   - This can help identify if the issue is with filtering or with the actual sending
+
+4. **Check the Activity Log in the UI**:
+   - The web interface provides real-time feedback about what's happening
+   - Look for error messages or warnings that might indicate the issue
+
+5. **Check WhatsApp Connection**:
+   - Make sure your WhatsApp client shows as "Connected" in the sidebar
+   - Try scanning the QR code again if needed
 
 ### Message Template Issues?
 - Check that your template placeholders use single braces: `{firstName}`
@@ -378,3 +399,33 @@ For any questions or issues, please open an issue on GitHub or contact the autho
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 🆕 Web Interface
+
+The WhatsApp Mass Messenger now includes a web interface for easier management of your messaging campaigns!
+
+### Features
+
+- **Real-time Dashboard**: Monitor message sending progress with live updates
+- **WhatsApp QR Code**: Scan the QR code directly from the web interface
+- **Contact Management**: Load and filter contacts from Google Sheets or CSV files
+- **Message Control**: Pause, resume, or clear the message queue at any time
+- **Template Selection**: Choose from different message templates or create custom messages
+- **Activity Logging**: View detailed logs of all operations
+
+### How to Use the Web Interface
+
+1. Start the server: `npm start`
+2. Open your browser and navigate to `http://localhost:3000`
+3. Scan the WhatsApp QR code when prompted
+4. Load your contacts from Google Sheets or a CSV file
+5. Apply filters if needed
+6. Select a message template and customize it
+7. Click "Send Messages" to start the campaign
+8. Monitor progress and control the process from the dashboard
+
+### Screenshots
+
+![Dashboard](https://example.com/dashboard.png)
+![Contact Management](https://example.com/contacts.png)
+![Message Templates](https://example.com/templates.png)
