@@ -35,7 +35,6 @@ const btnSendAllMessages = document.getElementById('btn-send-all-messages');
 const csvFilePath = document.getElementById('csv-file-path');
 const filterCities = document.getElementById('filter-cities');
 const filterBlockedNumbers = document.getElementById('filter-blocked-numbers');
-const filterPaidLabel = document.getElementById('filter-paid-label');
 const messageTemplate = document.getElementById('message-template');
 const customMessage = document.getElementById('custom-message');
 const eventDate = document.getElementById('event-date');
@@ -104,7 +103,11 @@ socket.on('status', (data) => {
 });
 
 socket.on('qr', (qrData) => {
-    generateQRCode(qrData);
+    console.log('Received QR event from server, but QR display is disabled in UI');
+    // QR code will be shown in terminal only, no need to generate it in the UI
+    
+    // Update the status message
+    updateStatusMessage('qr_received', 'QR Code received. Please check your terminal to scan the QR code.');
 });
 
 socket.on('stats', (stats) => {
@@ -314,13 +317,11 @@ btnApplyFilters.addEventListener('click', () => {
             .filter(num => num.length > 0) 
         : [];
     
-    const filterByPaidLabel = filterPaidLabel.checked;
-    
     // Show detailed feedback that filters are being applied
-    logActivity(`Applying filters: ${cities.length ? 'Cities: ' + cities.join(', ') : 'No cities'}, ${blockedNumbers.length ? 'Blocked numbers: ' + blockedNumbers.length : 'No blocked numbers'}, Paid label: ${filterByPaidLabel ? 'Yes' : 'No'}`, 'info');
+    logActivity(`Applying filters: ${cities.length ? 'Cities: ' + cities.join(', ') : 'No cities'}, ${blockedNumbers.length ? 'Blocked numbers: ' + blockedNumbers.length : 'No blocked numbers'}`, 'info');
     
     // If no filters specified, warn the user
-    if (cities.length === 0 && blockedNumbers.length === 0 && !filterByPaidLabel) {
+    if (cities.length === 0 && blockedNumbers.length === 0) {
         logActivity('Warning: No filters specified. All contacts will pass the filter.', 'warning');
     }
     
@@ -332,7 +333,6 @@ btnApplyFilters.addEventListener('click', () => {
         body: JSON.stringify({
             cities,
             blockedNumbers,
-            filterByPaidLabel,
             debug: true // Request detailed debug info
         })
     })
@@ -562,18 +562,76 @@ function updateWhatsAppStatus(status, message) {
 }
 
 function updateStatusMessage(status, message) {
+    if (!message) return;
+    
+    // Set appropriate alert class
     let alertClass = 'alert-info';
     
-    if (status === 'ready' || status === 'completed') {
+    if (status === 'ready' || status === 'completed' || status === 'authenticated') {
         alertClass = 'alert-success';
-    } else if (status === 'error') {
+    } else if (status === 'error' || status === 'fatal_error' || status === 'disconnected') {
         alertClass = 'alert-danger';
-    } else if (status === 'paused') {
+    } else if (status === 'paused' || status === 'warning') {
         alertClass = 'alert-warning';
     }
     
     statusMessage.className = `alert ${alertClass}`;
-    statusMessage.textContent = message;
+    
+    // Create more user-friendly status messages
+    let userFriendlyMessage = message;
+    
+    // Transform technical status messages into user-friendly ones
+    switch (status) {
+        case 'initializing':
+            userFriendlyMessage = '🚀 Starting WhatsApp service...';
+            break;
+        case 'qr_received':
+            userFriendlyMessage = '📱 Please check your terminal to scan the QR code with WhatsApp';
+            break;
+        case 'ready':
+            userFriendlyMessage = '✅ WhatsApp connected and ready to send messages!';
+            break;
+        case 'authenticated':
+            userFriendlyMessage = '🔐 WhatsApp successfully authenticated';
+            break;
+        case 'processing':
+            userFriendlyMessage = '📤 Sending messages...';
+            break;
+        case 'batch_delay':
+            userFriendlyMessage = '⏱️ Taking a short break between batches to avoid rate limits';
+            break;
+        case 'completed':
+            userFriendlyMessage = '🎉 All messages have been sent successfully!';
+            break;
+        case 'paused':
+            userFriendlyMessage = '⏸️ Message sending paused - click Resume to continue';
+            break;
+        case 'resumed':
+            userFriendlyMessage = '▶️ Message sending resumed';
+            break;
+        case 'error':
+            userFriendlyMessage = `❌ ${message.replace(/Error:|error:/i, '')}`;
+            break;
+        case 'fatal_error':
+            userFriendlyMessage = `⛔ ${message.replace(/Error:|error:/i, '')}`;
+            break;
+        case 'disconnected':
+            userFriendlyMessage = '🔌 WhatsApp disconnected - trying to reconnect...';
+            break;
+        default:
+            // If no specific formatting, keep original but add emoji based on content
+            if (message.includes('error') || message.includes('fail')) {
+                userFriendlyMessage = `❌ ${message}`;
+            } else if (message.includes('success') || message.includes('ready')) {
+                userFriendlyMessage = `✅ ${message}`;
+            } else if (message.includes('warning') || message.includes('caution')) {
+                userFriendlyMessage = `⚠️ ${message}`;
+            } else {
+                userFriendlyMessage = `ℹ️ ${message}`;
+            }
+    }
+    
+    statusMessage.textContent = userFriendlyMessage;
 }
 
 function updateMessageStats(stats) {
@@ -590,16 +648,39 @@ function updateContactStats(stats) {
 
 function updateProgressBar(stats) {
     if (stats.total > 0) {
-        const progress = ((stats.sent + stats.failed + stats.skipped) / stats.total) * 100;
+        const completed = stats.sent + stats.failed + stats.skipped;
+        const progress = (completed / stats.total) * 100;
+        
+        // Update progress bar
         progressBar.style.width = `${progress}%`;
+        progressBar.setAttribute('aria-valuenow', completed);
+        progressBar.setAttribute('aria-valuemax', stats.total);
+        
+        // Add text to the progress bar
+        progressBar.textContent = `${Math.round(progress)}% (${completed}/${stats.total})`;
+        
+        // Style based on progress
+        progressBar.className = 'progress-bar progress-bar-striped';
         
         if (progress >= 100) {
             progressBar.classList.remove('progress-bar-animated');
+            progressBar.classList.add('bg-success');
+            progressBar.textContent = '100% Complete! 🎉';
         } else {
             progressBar.classList.add('progress-bar-animated');
+            
+            // Color based on relative success rate
+            if (stats.failed > stats.sent) {
+                progressBar.classList.add('bg-danger');
+            } else if (stats.failed > 0) {
+                progressBar.classList.add('bg-warning');
+            } else {
+                progressBar.classList.add('bg-info');
+            }
         }
     } else {
         progressBar.style.width = '0%';
+        progressBar.textContent = '';
     }
 }
 
@@ -623,7 +704,9 @@ function updateButtonStates() {
 }
 
 function showQRCode() {
-    qrcodeContainer.classList.remove('d-none');
+    console.log('QR code container is hidden - QR codes only shown in terminal');
+    // Keep the container hidden as QR codes are only shown in terminal
+    // qrcodeContainer.classList.remove('d-none');
 }
 
 function hideQRCode() {
@@ -631,27 +714,95 @@ function hideQRCode() {
 }
 
 function generateQRCode(data) {
-    // Clear previous QR code
-    qrcodeElement.innerHTML = '';
-    
-    // Generate new QR code
-    QRCode.toCanvas(qrcodeElement, data, function (error) {
-        if (error) {
-            logActivity('Error generating QR code', 'error');
-        }
-    });
-    
-    showQRCode();
+    console.log('QR code generation in UI is disabled. Check your terminal for QR code.');
+    // QR code generation in UI is disabled
 }
 
 function logActivity(message, type = 'info') {
     const timestamp = new Date().toLocaleTimeString();
+    
+    // Create a log entry that's more user-readable
+    let userFriendlyMessage = message;
+    
+    // Replace technical terms with more user-friendly ones
+    if (message.startsWith('Status:')) {
+        userFriendlyMessage = message.replace('Status:', '📋');
+    }
+    
+    // Add emojis and friendlier language based on the message type
+    if (type === 'error') {
+        userFriendlyMessage = `❌ ${userFriendlyMessage}`;
+    } else if (type === 'success') {
+        userFriendlyMessage = `✅ ${userFriendlyMessage}`;
+    } else if (type === 'warning') {
+        userFriendlyMessage = `⚠️ ${userFriendlyMessage}`;
+    } else if (type === 'info') {
+        userFriendlyMessage = `ℹ️ ${userFriendlyMessage}`;
+    }
+
+    // Create log entry element
     const logEntry = document.createElement('div');
     logEntry.className = `log-entry ${type}`;
-    logEntry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+    logEntry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${userFriendlyMessage}`;
     
+    // Add to log
     activityLog.appendChild(logEntry);
     activityLog.scrollTop = activityLog.scrollHeight;
+    
+    // Update progress bar if the message indicates progress
+    updateProgressIndicator(message, type);
+}
+
+// New function to update the progress indicator based on message content
+function updateProgressIndicator(message, type) {
+    // Only update progress bar for certain message types
+    if (message.includes("Loaded") || 
+        message.includes("filtered") || 
+        message.includes("Sending") ||
+        message.includes("sent") ||
+        message.includes("completed")) {
+        
+        // Extract numbers from the message when possible
+        const numbers = message.match(/\d+/g);
+        if (numbers && numbers.length >= 1) {
+            const value = parseInt(numbers[0]);
+            
+            // If we have two numbers, treat as progress (e.g., "Sent 5 of 20 messages")
+            if (numbers.length >= 2) {
+                const total = parseInt(numbers[1]);
+                if (!isNaN(value) && !isNaN(total) && total > 0) {
+                    const percentage = (value / total) * 100;
+                    progressBar.style.width = `${percentage}%`;
+                    progressBar.setAttribute('aria-valuenow', value);
+                    progressBar.setAttribute('aria-valuemax', total);
+                    
+                    // Add text inside the progress bar
+                    progressBar.textContent = `${Math.round(percentage)}% (${value}/${total})`;
+                    
+                    // Set color based on type
+                    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+                    if (type === 'error') {
+                        progressBar.classList.add('bg-danger');
+                    } else if (type === 'success' || percentage === 100) {
+                        progressBar.classList.add('bg-success');
+                    } else if (type === 'warning') {
+                        progressBar.classList.add('bg-warning');
+                    } else {
+                        progressBar.classList.add('bg-info');
+                    }
+                }
+            } else {
+                // If we just have one number and it's a completion message, set to 100%
+                if (message.includes("completed") || message.includes("finished") || type === 'success') {
+                    progressBar.style.width = '100%';
+                    progressBar.setAttribute('aria-valuenow', 100);
+                    progressBar.textContent = 'Complete!';
+                    progressBar.classList.remove('progress-bar-animated');
+                    progressBar.classList.add('bg-success');
+                }
+            }
+        }
+    }
 }
 
 function showRestartButton() {
@@ -696,6 +847,7 @@ function init() {
                 updateStatusMessage('error', 'Could not get status from server');
                 serviceErrorState = true;
                 showRestartButton();
+                updateButtonStates();
             }
             
             updateButtonStates();

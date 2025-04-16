@@ -110,26 +110,23 @@ class ContactService extends EventEmitter {
     }
 
     async filterContacts(options = {}) {
-        const {
-            cities = config.ALLOWED_CITIES,
-            blockedNumbers = config.BLOCKED_NUMBERS,
-            filterByPaidLabel = config.FILTER_BY_PAID_LABEL,
+        const { 
+            cities = [], 
+            blockedNumbers = [],
             applyFilters = true,
-            debugMessages = null // Array to collect debug messages
+            debugMode = false
         } = options;
         
-        const debugMode = Array.isArray(debugMessages);
-        
+        const debugMessages = [];
         const addDebugMessage = (message) => {
             if (debugMode) {
                 debugMessages.push(message);
-                // Also log to server console
-                logger.info(`[Debug] ${message}`);
+                logger.debug(message);
             }
         };
         
         logger.info('Filtering contacts...');
-        logger.info(`Filter options: cities=${JSON.stringify(cities)}, blocked=${blockedNumbers?.length}, byPaidLabel=${filterByPaidLabel}, applyFilters=${applyFilters}`);
+        logger.info(`Filter options: cities=${JSON.stringify(cities)}, blocked=${blockedNumbers?.length}, applyFilters=${applyFilters}`);
         
         if (this.io) {
             this.io.emit('status', { 
@@ -324,47 +321,6 @@ class ContactService extends EventEmitter {
                 );
             });
             logger.info(`Filtered to ${filtered.length} contacts after removing blocked numbers`);
-        }
-        
-        // Filter by paid label if enabled
-        if (filterByPaidLabel && this.whatsappClient.isReady) {
-            try {
-                const paidLabel = await this.whatsappClient.getPaidLabel();
-                
-                if (paidLabel) {
-                    logger.info(`Filtering contacts by paid label: ${paidLabel.name} (${paidLabel.id})`);
-                    
-                    // Get all contacts with the paid label
-                    const paidNumbers = await this.whatsappClient.getContactsWithPaidLabel();
-                    
-                    if (paidNumbers.length > 0) {
-                        // Keep only contacts whose numbers are in the paidNumbers list
-                        const beforeCount = filtered.length;
-                        filtered = filtered.filter(contact => {
-                            if (!contact.number) return false;
-                            
-                            // Clean the number for comparison (remove non-digits)
-                            const cleanNumber = contact.number.toString().replace(/\D/g, '');
-                            
-                            // Check if this contact's number is in the paid label list
-                            const hasPaidLabel = paidNumbers.some(paidNum => {
-                                const cleanPaidNum = paidNum.replace(/\D/g, '');
-                                return cleanNumber.endsWith(cleanPaidNum) || cleanPaidNum.endsWith(cleanNumber);
-                            });
-                            
-                            return hasPaidLabel;
-                        });
-                        
-                        logger.info(`Filtered from ${beforeCount} to ${filtered.length} contacts with paid label`);
-                    } else {
-                        logger.warn('No contacts found with the paid label. No filtering applied.');
-                    }
-                } else {
-                    logger.warn('Paid label filtering enabled but no label found');
-                }
-            } catch (error) {
-                logger.error('Error filtering by paid label:', error);
-            }
         }
         
         this.filteredContacts = filtered;

@@ -360,7 +360,7 @@ app.post('/api/messages/send-all', async (req, res) => {
             return res.status(400).json({ error: 'Template name is required' });
         }
         
-        // Apply only minimal filtering (blocked numbers) but skip city and paid label filtering
+        // Apply only minimal filtering (blocked numbers) but skip city filtering
         await contactService.filterContacts({ applyFilters: false });
         
         // Get the minimally filtered contacts

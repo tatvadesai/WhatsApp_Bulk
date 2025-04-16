@@ -103,7 +103,7 @@ class MessageService extends EventEmitter {
 
         try {
             // Process messages in batches
-            const batchSize = Math.min(config.BATCH_SIZE, this.messageQueue.length);
+            const batchSize = Math.min(config.batchSize || 10, this.messageQueue.length);
             const batch = this.messageQueue.splice(0, batchSize);
             
             logger.info(`Processing batch of ${batch.length} messages`);
@@ -112,7 +112,7 @@ class MessageService extends EventEmitter {
             if (this.io) {
                 this.io.emit('status', { 
                     status: 'processing', 
-                    message: `Processing batch of ${batch.length} messages` 
+                    message: `Sending messages (${batch.length} contacts in current batch)` 
                 });
             }
 
@@ -192,6 +192,18 @@ class MessageService extends EventEmitter {
                     // Log success
                     logger.info(`Message sent to ${contact.firstName} (${contact.number})`);
                     
+                    // Send a progress update every 5 messages
+                    if (this.stats.sent % 5 === 0) {
+                        const progress = (this.stats.sent + this.stats.failed + this.stats.skipped);
+                        const total = progress + this.messageQueue.length;
+                        if (this.io) {
+                            this.io.emit('status', { 
+                                status: 'progress', 
+                                message: `Sent ${progress} of ${total} messages (${Math.round((progress/total)*100)}% complete)` 
+                            });
+                        }
+                    }
+                    
                 } catch (error) {
                     // Update stats
                     this.stats.failed++;
@@ -211,7 +223,7 @@ class MessageService extends EventEmitter {
                 }
                 
                 // Small delay between messages in the same batch
-                await new Promise(resolve => setTimeout(resolve, config.MESSAGE_DELAY));
+                await new Promise(resolve => setTimeout(resolve, config.messageDelay || 5000));
             }
             
             // Save failed contacts
@@ -221,16 +233,17 @@ class MessageService extends EventEmitter {
             
             // Delay between batches
             if (this.messageQueue.length > 0) {
-                logger.info(`Waiting ${config.BATCH_DELAY / 1000} seconds before next batch...`);
+                const batchDelaySeconds = (config.batchDelay || 30000) / 1000;
+                logger.info(`Waiting ${batchDelaySeconds} seconds before next batch...`);
                 
                 if (this.io) {
                     this.io.emit('status', { 
                         status: 'batch_delay', 
-                        message: `Waiting ${config.BATCH_DELAY / 1000} seconds before next batch...` 
+                        message: `Taking a short break (${batchDelaySeconds} seconds) to avoid hitting WhatsApp rate limits...` 
                     });
                 }
                 
-                setTimeout(() => this._processQueue(), config.BATCH_DELAY);
+                setTimeout(() => this._processQueue(), config.batchDelay || 30000);
             } else {
                 this.isProcessing = false;
                 this.emit('queue_empty');
@@ -239,7 +252,7 @@ class MessageService extends EventEmitter {
                 if (this.io) {
                     this.io.emit('status', { 
                         status: 'completed', 
-                        message: 'All messages processed' 
+                        message: '🎉 Success! All messages have been sent.' 
                     });
                 }
             }

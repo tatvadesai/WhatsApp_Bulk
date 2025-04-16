@@ -1,4 +1,4 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -11,7 +11,6 @@ class WhatsAppClient extends EventEmitter {
         this.isReady = false;
         this.isPaused = false;
         this.io = io; // Socket.io instance for real-time updates
-        this.paidLabel = null;
         this.initAttempts = 0;
         this.maxInitAttempts = 3;
         this.restartTimeout = null;
@@ -30,10 +29,10 @@ class WhatsAppClient extends EventEmitter {
         // Enhance browser options for better stability
         const puppeteerOptions = {
             args: [
-                ...config.PUPPETEER_ARGS,
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-site-isolation-trials'
+                ...config.puppeteerArgs,
+                // '--disable-web-security',
+                // '--disable-features=IsolateOrigins,site-per-process',
+                // '--disable-site-isolation-trials'
             ],
             timeout: config.BROWSER_TIMEOUT,
             headless: 'new', // Use new headless mode for better stability
@@ -45,15 +44,13 @@ class WhatsAppClient extends EventEmitter {
         
         // Create a new client with enhanced options
         this.client = new Client({
-            authStrategy: new LocalAuth({
-                dataPath: './auth_data' // Specify auth data path explicitly
-            }),
+            authStrategy: new NoAuth(),
             puppeteer: puppeteerOptions,
             webVersionCache: {
                 type: 'remote', // Use remote cache for better stability
                 remotePath: './.wwebjs_cache'
             },
-            webVersion: '2.2337.7', // Explicitly set a stable version
+            // webVersion: '2.2337.7', // Remove fixed web version
             restartOnAuthFail: true, // Automatically restart on auth failure
         });
 
@@ -131,121 +128,6 @@ class WhatsAppClient extends EventEmitter {
         return this;
     }
 
-    async getPaidLabel() {
-        if (this.paidLabel) return this.paidLabel;
-        
-        try {
-            const labels = await this.client.getLabels();
-            const foundPaidLabel = labels.find(label => 
-                label.name.toLowerCase() === config.PAID_LABEL_NAME.toLowerCase() || 
-                label.name.toLowerCase().includes(config.PAID_LABEL_NAME.toLowerCase())
-            );
-            
-            if (!foundPaidLabel) {
-                logger.warn(`No "${config.PAID_LABEL_NAME}" label found in WhatsApp Business.`);
-                return null;
-            }
-            
-            this.paidLabel = foundPaidLabel;
-            logger.info(`Found "${config.PAID_LABEL_NAME}" label with ID: ${this.paidLabel.id}`);
-            return this.paidLabel;
-        } catch (error) {
-            logger.error('Error fetching WhatsApp Business labels:', error);
-            return null;
-        }
-    }
-
-    async getContactsWithPaidLabel() {
-        try {
-            const paidLabel = await this.getPaidLabel();
-            if (!paidLabel) {
-                logger.warn('Cannot get contacts with paid label: No paid label found');
-                return [];
-            }
-
-            logger.info(`Getting contacts with label: ${paidLabel.name} (${paidLabel.id})`);
-            
-            // First try to get chats with the label (newer API versions)
-            try {
-                const labeledChats = await this.client.getChatsByLabelId(paidLabel.id);
-                if (labeledChats && labeledChats.length > 0) {
-                    logger.info(`Found ${labeledChats.length} chats with the paid label`);
-                    
-                    // Extract phone numbers from the labeled chats
-                    const paidNumbers = labeledChats.map(chat => {
-                        if (chat.isGroup) return null;
-                        return chat.id._serialized.split('@')[0];
-                    }).filter(Boolean);
-                    
-                    logger.info(`Extracted ${paidNumbers.length} phone numbers with paid label`);
-                    return paidNumbers;
-                }
-            } catch (e) {
-                logger.warn(`getChatsByLabelId method failed, trying alternative approach: ${e.message}`);
-            }
-            
-            // If the above fails, or if there are no labeled chats, fall back to getting all chats
-            // and then checking each one for the label (this is less efficient but more compatible)
-            logger.info('Falling back to manual chat label checking');
-            const allChats = await this.client.getChats();
-            const nonGroupChats = allChats.filter(chat => !chat.isGroup);
-            
-            logger.info(`Checking ${nonGroupChats.length} chats for the paid label`);
-            
-            const paidChats = [];
-            for (const chat of nonGroupChats) {
-                try {
-                    const chatLabels = await chat.getLabels();
-                    if (chatLabels.includes(paidLabel.id)) {
-                        const phoneNumber = chat.id._serialized.split('@')[0];
-                        paidChats.push(phoneNumber);
-                    }
-                } catch (e) {
-                    logger.warn(`Error checking labels for chat ${chat.name}: ${e.message}`);
-                }
-            }
-            
-            logger.info(`Found ${paidChats.length} chats with the paid label`);
-            return paidChats;
-        } catch (error) {
-            logger.error('Error getting contacts with paid label:', error);
-            return [];
-        }
-    }
-
-    async hasLabel(contactId, labelId) {
-        try {
-            if (!this.client) {
-                logger.warn('WhatsApp client not initialized');
-                return false;
-            }
-            
-            if (!contactId || !labelId) {
-                logger.warn('Missing contactId or labelId');
-                return false;
-            }
-            
-            // Format contact ID if needed
-            const formattedContactId = contactId.includes('@c.us') 
-                ? contactId 
-                : `${contactId}@c.us`;
-            
-            // Try to get the chat
-            const chat = await this.client.getChatById(formattedContactId);
-            if (!chat) {
-                logger.warn(`Chat not found for contact ${contactId}`);
-                return false;
-            }
-            
-            // Get labels for the chat
-            const chatLabels = await chat.getLabels();
-            return chatLabels.includes(labelId);
-        } catch (error) {
-            logger.error(`Error checking if contact ${contactId} has label ${labelId}:`, error);
-            return false;
-        }
-    }
-
     async sendMessage(to, message) {
         if (!this.isReady) {
             throw new Error('WhatsApp client is not ready');
@@ -301,17 +183,16 @@ class WhatsAppClient extends EventEmitter {
     _handleQrCode(qr) {
         logger.info('QR Code received, scan to authenticate');
         
-        // Display QR in terminal
+        // Display QR in terminal only
         qrcode.generate(qr, { small: true });
+        logger.info('Please scan the QR code in your terminal to connect');
         
-        // Generate QR code for web interface
-        const qrCodeData = qr;
-        this.emit('qr', qrCodeData);
-        
-        // Send to web interface if socket.io is available
+        // Send status update to frontend but not the QR code itself
         if (this.io) {
-            this.io.emit('qr', qrCodeData);
-            this.io.emit('status', { status: 'qr_received', message: 'QR Code received, scan to authenticate' });
+            this.io.emit('status', { 
+                status: 'qr_received', 
+                message: 'QR Code received. Please check your terminal to scan the QR code.'
+            });
         }
     }
 

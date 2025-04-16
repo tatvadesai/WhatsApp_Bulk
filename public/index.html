@@ -24,8 +24,10 @@
                     </div>
                     
                     <div id="qrcode-container" class="text-center my-3 d-none">
-                        <p class="text-muted small">Scan this QR code with WhatsApp</p>
-                        <div id="qrcode"></div>
+                        <p class="text-muted small">QR codes will appear in your terminal</p>
+                        <div class="alert alert-info">
+                            When prompted, check your terminal window to scan the WhatsApp QR code
+                        </div>
                     </div>
                     
                     <!-- Add a service restart button -->
@@ -146,11 +148,6 @@
                                 <div class="mb-3">
                                     <label for="filter-blocked-numbers" class="form-label">Blocked Numbers (comma-separated)</label>
                                     <input type="text" class="form-control" id="filter-blocked-numbers" placeholder="1234567890, 9876543210">
-                                </div>
-                                <div class="mb-3 form-check">
-                                    <input type="checkbox" class="form-check-input" id="filter-paid-label" checked>
-                                    <label class="form-check-label" for="filter-paid-label">Filter by Paid Label</label>
-                                    <small class="form-text text-muted d-block">Only send to contacts that have the "Paid" label in WhatsApp Business</small>
                                 </div>
                                 <button class="btn btn-primary" id="btn-apply-filters">Apply Filters</button>
                             </div>

@@ -5,7 +5,6 @@ const path = require('path');
 
 // Load configuration
 const config = require('./config');
-config.validateConfig();
 
 // Import utilities
 const logger = require('./utils/logger');
@@ -852,7 +851,7 @@ async function sendMessage(contact) {
 async function sendMessageInBatches(contacts) {
     try {
         const totalContacts = contacts.length;
-        const batchSize = config.BATCH_SIZE;
+        const batchSize = config.batchSize || 10;
         const totalBatches = Math.ceil(totalContacts / batchSize);
         
         let successCount = 0;
@@ -887,8 +886,9 @@ async function sendMessageInBatches(contacts) {
             
             // If not the last batch, wait between batches
             if (i + batchSize < totalContacts) {
-                logger.info(`Waiting ${config.BATCH_DELAY/1000} seconds before next batch...`);
-                await new Promise(resolve => setTimeout(resolve, config.BATCH_DELAY));
+                const batchDelaySeconds = (config.batchDelay || 30000) / 1000;
+                logger.info(`Waiting ${batchDelaySeconds} seconds before next batch...`);
+                await new Promise(resolve => setTimeout(resolve, config.batchDelay || 30000));
             }
         }
         
