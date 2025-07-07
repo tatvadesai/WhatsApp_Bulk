@@ -1,0 +1,7 @@
+Hi {firstName},
+
+Just following up on the previous message about the GatherAround dinner on {eventDate}.
+Best,
+Tatva
+
+P.S. To those who paid, don't worry. You're in.

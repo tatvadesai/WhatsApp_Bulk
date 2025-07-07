@@ -13,10 +13,17 @@ function formatMessage(templateContent, data) {
             logger.error('No template content provided');
             return '';
         }
+
+        // Create a case-insensitive data map
+        const lowerCaseData = {};
+        for (const key in data) {
+            lowerCaseData[key.toLowerCase()] = data[key];
+        }
         
         return templateContent.replace(/\{(\w+)\}/g, (match, placeholder) => {
-            if (data[placeholder] !== undefined) {
-                return data[placeholder];
+            const lowerCasePlaceholder = placeholder.toLowerCase();
+            if (lowerCaseData[lowerCasePlaceholder] !== undefined) {
+                return lowerCaseData[lowerCasePlaceholder];
             }
             
             logger.warn(`Placeholder {${placeholder}} not found in data`);
@@ -41,26 +48,27 @@ function prepareContactMessage(contact, templateContent, additionalData = {}) {
         logger.debug(`Using template: ${templateContent.substring(0, 30)}...`);
         logger.debug(`Additional data: ${JSON.stringify(additionalData)}`);
         
+        // Normalize the contact to ensure consistent field names
+        const normalizedContact = {};
+        for (const key in contact) {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey.includes('first')) {
+                normalizedContact.firstName = contact[key];
+            } else if (lowerKey.includes('last')) {
+                normalizedContact.lastName = contact[key];
+            } else {
+                normalizedContact[key] = contact[key];
+            }
+        }
+
         // Create data object with contact properties and additional data
-        const messageData = {
-            firstName: contact.firstname || contact.firstName || '',
-            lastName: contact.lastname || contact.lastName || '',
-            fullName: (contact.firstname || contact.firstName || '') + ' ' + (contact.lastname || contact.lastName || ''),
-            city: contact.city || '',
-            // Include default event data
-            eventDate: process.env.EVENT_DATE || 'TBD',
-            eventName: process.env.EVENT_NAME || 'our event',
-            eventTime: process.env.EVENT_TIME || 'TBD',
-            venue: process.env.EVENT_VENUE || 'TBD',
-            ...contact,
-            ...additionalData
-        };
+        const messageData = { ...normalizedContact, ...additionalData };
         
         // For custom templates, directly return the custom message if provided
         if (templateContent === templates.custom && messageData.customMessage) {
             logger.info(`Using custom message: "${messageData.customMessage.substring(0, 30)}..."`);
             return {
-                ...contact,
+                ...normalizedContact,
                 message: messageData.customMessage
             };
         }
@@ -71,7 +79,7 @@ function prepareContactMessage(contact, templateContent, additionalData = {}) {
         
         // Return the contact object with the formatted message
         return {
-            ...contact,
+            ...normalizedContact,
             message: formattedMessage
         };
     } catch (error) {

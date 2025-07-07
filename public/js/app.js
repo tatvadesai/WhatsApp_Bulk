@@ -26,13 +26,16 @@ const btnPause = document.getElementById('btn-pause');
 const btnResume = document.getElementById('btn-resume');
 const btnClear = document.getElementById('btn-clear');
 const btnLoadGoogleSheets = document.getElementById('btn-load-google-sheets');
-const btnLoadCsv = document.getElementById('btn-load-csv');
-const btnApplyFilters = document.getElementById('btn-apply-filters');
+const googleSheetId = document.getElementById('google-sheet-id');
+const googleSheetName = document.getElementById('google-sheet-name');
+const btnApplyFilters = document.getElementById('btn-apply-filters'); // Added
+
+const filterPaidContacts = document.getElementById('filter-paid-contacts');
 const btnSendMessages = document.getElementById('btn-send-messages');
 const btnSendAllMessages = document.getElementById('btn-send-all-messages');
 
 // Input Elements
-const csvFilePath = document.getElementById('csv-file-path');
+
 const filterCities = document.getElementById('filter-cities');
 const filterBlockedNumbers = document.getElementById('filter-blocked-numbers');
 const messageTemplate = document.getElementById('message-template');
@@ -50,6 +53,82 @@ const eventDataContainer = document.getElementById('event-data-container');
 let isPaused = false;
 let isProcessing = false;
 let serviceErrorState = false;
+
+// Helper Functions
+function logActivity(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = document.createElement('div');
+    logEntry.classList.add('log-entry', type);
+    logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+    activityLog.prepend(logEntry); // Add to top
+    if (activityLog.children.length > 100) { // Keep log clean
+        activityLog.removeChild(activityLog.lastChild);
+    }
+}
+
+function updateWhatsAppStatus(status, message) {
+    whatsappStatus.className = `status-indicator ${status}`;
+    whatsappStatus.innerHTML = `<i class="bi bi-circle-fill"></i> ${message}`;
+}
+
+function updateStatusMessage(status, message) {
+    statusMessage.className = `alert alert-${status === 'error' || status === 'fatal_error' ? 'danger' : 'info'}`;
+    statusMessage.textContent = message;
+}
+
+function showQRCode() {
+    qrcodeContainer.classList.remove('d-none');
+}
+
+function hideQRCode() {
+    qrcodeContainer.classList.add('d-none');
+}
+
+function showRestartButton() {
+    restartContainer.classList.remove('d-none');
+}
+
+function hideRestartButton() {
+    restartContainer.classList.add('d-none');
+}
+
+function updateMessageStats(stats) {
+    totalMessages.textContent = stats.total;
+    sentMessages.textContent = stats.sent;
+    failedMessages.textContent = stats.failed;
+    skippedMessages.textContent = stats.skipped;
+}
+
+function updateProgressBar(stats) {
+    const total = stats.total;
+    const processed = stats.sent + stats.failed + stats.skipped;
+    const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+    progressBar.style.width = `${percentage}%`;
+    progressBar.setAttribute('aria-valuenow', percentage);
+    progressBar.textContent = `${percentage}%`;
+}
+
+function updateContactStats(stats) {
+    totalContacts.textContent = stats.total;
+    filteredContacts.textContent = stats.filtered;
+}
+
+function generateQRCode(qrData) {
+    // This function is intentionally left blank as QR code is now displayed in the terminal.
+}
+
+function updateButtonStates() {
+    btnPause.disabled = isPaused || !isProcessing || serviceErrorState;
+    btnResume.disabled = !isPaused || isProcessing || serviceErrorState;
+    btnClear.disabled = isProcessing || serviceErrorState;
+    btnSendMessages.disabled = isProcessing || serviceErrorState;
+    btnSendAllMessages.disabled = isProcessing || serviceErrorState;
+    btnLoadGoogleSheets.disabled = isProcessing || serviceErrorState;
+    if (btnApplyFilters) { // Check if element exists before accessing
+        btnApplyFilters.disabled = isProcessing || serviceErrorState;
+    }
+    btnRestartService.disabled = isProcessing;
+}
 
 // Socket.io event listeners
 socket.on('connect', () => {
@@ -103,11 +182,9 @@ socket.on('status', (data) => {
 });
 
 socket.on('qr', (qrData) => {
-    console.log('Received QR event from server, but QR display is disabled in UI');
-    // QR code will be shown in terminal only, no need to generate it in the UI
-    
-    // Update the status message
-    updateStatusMessage('qr_received', 'QR Code received. Please check your terminal to scan the QR code.');
+    logActivity('QR code received. Please scan to log in.', 'info');
+    generateQRCode(qrData);
+    showQRCode();
 });
 
 socket.on('stats', (stats) => {
@@ -181,11 +258,24 @@ btnClear.addEventListener('click', () => {
 });
 
 btnLoadGoogleSheets.addEventListener('click', () => {
+    const sheetId = googleSheetId.value.trim();
+    const sheetName = googleSheetName.value.trim();
+
+    if (!sheetId) {
+        logActivity('Please enter a Google Sheet ID', 'error');
+        return;
+    }
+    if (!sheetName) {
+        logActivity('Please select a Google Sheet Name', 'error');
+        return;
+    }
+
     fetch('/api/contacts/google-sheets', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({ sheetId, sheetName })
     })
     .then(response => response.json())
     .then(data => {
@@ -200,32 +290,7 @@ btnLoadGoogleSheets.addEventListener('click', () => {
     });
 });
 
-btnLoadCsv.addEventListener('click', () => {
-    const filePath = csvFilePath.value.trim();
-    if (!filePath) {
-        logActivity('Please enter a CSV file path', 'error');
-        return;
-    }
-    
-    fetch('/api/contacts/csv', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ filePath })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            logActivity(`Loaded ${data.count} contacts from CSV`, 'success');
-        } else {
-            logActivity(`Error: ${data.error}`, 'error');
-        }
-    })
-    .catch(error => {
-        logActivity(`Error loading contacts: ${error.message}`, 'error');
-    });
-});
+
 
 // Add new button for inspecting contacts
 const btnInspectContacts = document.createElement('button');
@@ -301,8 +366,50 @@ function inspectContacts() {
         });
 }
 
+const citiesLoader = document.getElementById('cities-loader');
+const blockedNumbersLoader = document.getElementById('blocked-numbers-loader');
+
+// Debounce function to limit how often a function is called
+function debounce(func, delay) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), delay);
+    };
+}
+
+// Animate numbers when they change
+function animateValue(obj, start, end, duration) {
+    let startTimestamp = null;
+    const step = (timestamp) => {
+        if (!startTimestamp) startTimestamp = timestamp;
+        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+        obj.innerHTML = Math.floor(progress * (end - start) + start);
+        if (progress < 1) {
+            window.requestAnimationFrame(step);
+        }
+    };
+    window.requestAnimationFrame(step);
+}
+
+function updateMessageStats(stats) {
+    animateValue(totalMessages, parseInt(totalMessages.textContent), stats.total, 500);
+    animateValue(sentMessages, parseInt(sentMessages.textContent), stats.sent, 500);
+    animateValue(failedMessages, parseInt(failedMessages.textContent), stats.failed, 500);
+    animateValue(skippedMessages, parseInt(skippedMessages.textContent), stats.skipped, 500);
+}
+
+function updateContactStats(stats) {
+    animateValue(totalContacts, parseInt(totalContacts.textContent), stats.total, 500);
+    animateValue(filteredContacts, parseInt(filteredContacts.textContent), stats.filtered, 500);
+}
+
 // Enhance the filter process to provide more feedback
-btnApplyFilters.addEventListener('click', () => {
+const debouncedFilter = debounce(() => {
+    citiesLoader.classList.remove('d-none');
+    blockedNumbersLoader.classList.remove('d-none');
+
     // Parse cities input, split by commas and trim each value
     const cities = filterCities.value.trim() 
         ? filterCities.value.split(',')
@@ -316,7 +423,7 @@ btnApplyFilters.addEventListener('click', () => {
             .map(num => num.trim())
             .filter(num => num.length > 0) 
         : [];
-    
+
     // Show detailed feedback that filters are being applied
     logActivity(`Applying filters: ${cities.length ? 'Cities: ' + cities.join(', ') : 'No cities'}, ${blockedNumbers.length ? 'Blocked numbers: ' + blockedNumbers.length : 'No blocked numbers'}`, 'info');
     
@@ -358,8 +465,15 @@ btnApplyFilters.addEventListener('click', () => {
     })
     .catch(error => {
         logActivity(`Error filtering contacts: ${error.message}`, 'error');
+    })
+    .finally(() => {
+        citiesLoader.classList.add('d-none');
+        blockedNumbersLoader.classList.add('d-none');
     });
-});
+}, 500); // 500ms debounce delay
+
+filterCities.addEventListener('input', debouncedFilter);
+filterBlockedNumbers.addEventListener('input', debouncedFilter);
 
 btnSendMessages.addEventListener('click', () => {
     const template = messageTemplate.value;
@@ -504,6 +618,12 @@ btnSendAllMessages.addEventListener('click', () => {
     });
 });
 
+// Template Management Elements
+const templateNameInput = document.getElementById('template-name');
+const templateContentInput = document.getElementById('template-content');
+const btnSaveTemplate = document.getElementById('btn-save-template');
+const btnDeleteTemplate = document.getElementById('btn-delete-template');
+
 // Template selection change handler
 messageTemplate.addEventListener('change', () => {
     const template = messageTemplate.value;
@@ -511,356 +631,194 @@ messageTemplate.addEventListener('change', () => {
     // Hide all data containers first
     customDataContainer.classList.add('d-none');
     eventDataContainer.classList.add('d-none');
-    
-    // Show relevant container based on template
+
     if (template === 'custom') {
         customDataContainer.classList.remove('d-none');
     } else if (['newEvent', 'reminder'].includes(template)) {
         eventDataContainer.classList.remove('d-none');
     }
+
+    // Load selected template into editor
+    loadTemplateIntoEditor(template);
 });
 
-// Add event handler for restart button
-btnRestartService.addEventListener('click', () => {
-    restartWhatsAppService();
-});
+btnSaveTemplate.addEventListener('click', saveTemplate);
+btnDeleteTemplate.addEventListener('click', deleteTemplate);
 
-// Function to restart WhatsApp service
-function restartWhatsAppService() {
-    logActivity('Restarting WhatsApp service...', 'warning');
-    updateWhatsAppStatus('initializing', 'Restarting...');
-    hideQRCode();
-    
-    fetch('/api/restart', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
+// Function to load templates into the dropdown
+async function loadTemplatesIntoDropdown() {
+    try {
+        const response = await fetch('/api/templates');
+        const data = await response.json();
         if (data.success) {
-            logActivity('Restart request sent. Waiting for WhatsApp to initialize...', 'info');
+            messageTemplate.innerHTML = ''; // Clear existing options
+            data.templates.forEach(templateName => {
+                const option = document.createElement('option');
+                option.value = templateName;
+                option.textContent = templateName;
+                messageTemplate.appendChild(option);
+            });
+            // Trigger change to load default template into editor
+            messageTemplate.dispatchEvent(new Event('change'));
         } else {
-            logActivity(`Error restarting: ${data.error}`, 'error');
-            showRestartButton();
+            logActivity(`Error loading templates: ${data.error}`, 'error');
         }
-    })
-    .catch(error => {
-        logActivity(`Error restarting WhatsApp: ${error.message}`, 'error');
-        showRestartButton();
+    } catch (error) {
+        logActivity(`Error fetching templates: ${error.message}`, 'error');
+    }
+}
+
+// Function to load a selected template into the editor
+async function loadTemplateIntoEditor(templateName) {
+    if (!templateName) {
+        templateNameInput.value = '';
+        templateContentInput.value = '';
+        btnDeleteTemplate.disabled = true;
+        return;
+    }
+    try {
+        const response = await fetch(`/api/templates/${templateName}`);
+        const data = await response.json();
+        if (data.success) {
+            templateNameInput.value = templateName;
+            templateContentInput.value = data.content;
+            btnDeleteTemplate.disabled = false;
+        } else {
+            logActivity(`Error loading template ${templateName}: ${data.error}`, 'error');
+            templateNameInput.value = templateName; // Keep name
+            templateContentInput.value = ''; // Clear content if not found
+            btnDeleteTemplate.disabled = true;
+        }
+    } catch (error) {
+        logActivity(`Error fetching template ${templateName}: ${error.message}`, 'error');
+        templateNameInput.value = templateName;
+        templateContentInput.value = '';
+        btnDeleteTemplate.disabled = true;
+    }
+}
+
+// Function to save a template
+async function saveTemplate() {
+    const name = templateNameInput.value.trim();
+    const content = templateContentInput.value.trim();
+
+    if (!name || !content) {
+        logActivity('Template name and content cannot be empty.', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/templates', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name, content })
+        });
+        const data = await response.json();
+        if (data.success) {
+            logActivity(`Template '${name}' saved successfully.`, 'success');
+            await loadTemplatesIntoDropdown(); // Refresh dropdown
+            messageTemplate.value = name; // Select the newly saved template
+            messageTemplate.dispatchEvent(new Event('change')); // Trigger change to update editor
+        } else {
+            logActivity(`Error saving template: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        logActivity(`Error saving template: ${error.message}`, 'error');
+    }
+}
+
+// Function to delete a template
+async function deleteTemplate() {
+    const name = templateNameInput.value.trim();
+    if (!name) {
+        logActivity('No template selected to delete.', 'error');
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to delete template '${name}'?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/templates/${name}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (data.success) {
+            logActivity(`Template '${name}' deleted successfully.`, 'success');
+            await loadTemplatesIntoDropdown(); // Refresh dropdown
+            templateNameInput.value = '';
+            templateContentInput.value = '';
+            btnDeleteTemplate.disabled = true;
+        } else {
+            logActivity(`Error deleting template: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        logActivity(`Error deleting template: ${error.message}`, 'error');
+    }
+}
+
+// Initialization function
+function init() {
+    // Initial button states
+    updateButtonStates();
+    // Load templates into dropdown on page load
+    loadTemplatesIntoDropdown();
+
+    // Event listener for Google Sheet ID input to load sheet names
+    googleSheetId.addEventListener('input', async () => {
+        const sheetId = googleSheetId.value.trim();
+        if (sheetId) {
+            try {
+                const response = await fetch(`/api/google-sheets/sheets?sheetId=${sheetId}`);
+                const data = await response.json();
+                if (data.success) {
+                    googleSheetName.innerHTML = '';
+                    data.sheets.forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name;
+                        googleSheetName.appendChild(option);
+                    });
+                    googleSheetName.disabled = false;
+                    logActivity(`Loaded ${data.sheets.length} sheets for ID: ${sheetId}`, 'success');
+                } else {
+                    logActivity(`Error loading sheets: ${data.error}`, 'error');
+                    googleSheetName.innerHTML = '<option value="">Error loading sheets</option>';
+                    googleSheetName.disabled = true;
+                }
+            } catch (error) {
+                logActivity(`Error fetching sheet names: ${error.message}`, 'error');
+                googleSheetName.innerHTML = '<option value="">Error fetching sheets</option>';
+                googleSheetName.disabled = true;
+            }
+        } else {
+            googleSheetName.innerHTML = '<option value="">Load Sheet ID first</option>';
+            googleSheetName.disabled = true;
+        }
+    });
+
+    // Event listener for restart service button
+    btnRestartService.addEventListener('click', () => {
+        logActivity('Restarting WhatsApp service...', 'info');
+        fetch('/api/restart', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    logActivity('WhatsApp service restart initiated.', 'success');
+                    hideRestartButton();
+                    updateWhatsAppStatus('initializing', 'Restarting...');
+                } else {
+                    logActivity(`Error restarting service: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                logActivity(`Error restarting service: ${error.message}`, 'error');
+            });
     });
 }
 
-// Helper functions
-function updateWhatsAppStatus(status, message) {
-    whatsappStatus.innerHTML = `
-        <div class="status-indicator ${status}">
-            <i class="bi bi-circle-fill"></i> ${message}
-        </div>
-    `;
-}
-
-function updateStatusMessage(status, message) {
-    if (!message) return;
-    
-    // Set appropriate alert class
-    let alertClass = 'alert-info';
-    
-    if (status === 'ready' || status === 'completed' || status === 'authenticated') {
-        alertClass = 'alert-success';
-    } else if (status === 'error' || status === 'fatal_error' || status === 'disconnected') {
-        alertClass = 'alert-danger';
-    } else if (status === 'paused' || status === 'warning') {
-        alertClass = 'alert-warning';
-    }
-    
-    statusMessage.className = `alert ${alertClass}`;
-    
-    // Create more user-friendly status messages
-    let userFriendlyMessage = message;
-    
-    // Transform technical status messages into user-friendly ones
-    switch (status) {
-        case 'initializing':
-            userFriendlyMessage = '🚀 Starting WhatsApp service...';
-            break;
-        case 'qr_received':
-            userFriendlyMessage = '📱 Please check your terminal to scan the QR code with WhatsApp';
-            break;
-        case 'ready':
-            userFriendlyMessage = '✅ WhatsApp connected and ready to send messages!';
-            break;
-        case 'authenticated':
-            userFriendlyMessage = '🔐 WhatsApp successfully authenticated';
-            break;
-        case 'processing':
-            userFriendlyMessage = '📤 Sending messages...';
-            break;
-        case 'batch_delay':
-            userFriendlyMessage = '⏱️ Taking a short break between batches to avoid rate limits';
-            break;
-        case 'completed':
-            userFriendlyMessage = '🎉 All messages have been sent successfully!';
-            break;
-        case 'paused':
-            userFriendlyMessage = '⏸️ Message sending paused - click Resume to continue';
-            break;
-        case 'resumed':
-            userFriendlyMessage = '▶️ Message sending resumed';
-            break;
-        case 'error':
-            userFriendlyMessage = `❌ ${message.replace(/Error:|error:/i, '')}`;
-            break;
-        case 'fatal_error':
-            userFriendlyMessage = `⛔ ${message.replace(/Error:|error:/i, '')}`;
-            break;
-        case 'disconnected':
-            userFriendlyMessage = '🔌 WhatsApp disconnected - trying to reconnect...';
-            break;
-        default:
-            // If no specific formatting, keep original but add emoji based on content
-            if (message.includes('error') || message.includes('fail')) {
-                userFriendlyMessage = `❌ ${message}`;
-            } else if (message.includes('success') || message.includes('ready')) {
-                userFriendlyMessage = `✅ ${message}`;
-            } else if (message.includes('warning') || message.includes('caution')) {
-                userFriendlyMessage = `⚠️ ${message}`;
-            } else {
-                userFriendlyMessage = `ℹ️ ${message}`;
-            }
-    }
-    
-    statusMessage.textContent = userFriendlyMessage;
-}
-
-function updateMessageStats(stats) {
-    totalMessages.textContent = stats.total;
-    sentMessages.textContent = stats.sent;
-    failedMessages.textContent = stats.failed;
-    skippedMessages.textContent = stats.skipped;
-}
-
-function updateContactStats(stats) {
-    totalContacts.textContent = stats.total;
-    filteredContacts.textContent = stats.filtered;
-}
-
-function updateProgressBar(stats) {
-    if (stats.total > 0) {
-        const completed = stats.sent + stats.failed + stats.skipped;
-        const progress = (completed / stats.total) * 100;
-        
-        // Update progress bar
-        progressBar.style.width = `${progress}%`;
-        progressBar.setAttribute('aria-valuenow', completed);
-        progressBar.setAttribute('aria-valuemax', stats.total);
-        
-        // Add text to the progress bar
-        progressBar.textContent = `${Math.round(progress)}% (${completed}/${stats.total})`;
-        
-        // Style based on progress
-        progressBar.className = 'progress-bar progress-bar-striped';
-        
-        if (progress >= 100) {
-            progressBar.classList.remove('progress-bar-animated');
-            progressBar.classList.add('bg-success');
-            progressBar.textContent = '100% Complete! 🎉';
-        } else {
-            progressBar.classList.add('progress-bar-animated');
-            
-            // Color based on relative success rate
-            if (stats.failed > stats.sent) {
-                progressBar.classList.add('bg-danger');
-            } else if (stats.failed > 0) {
-                progressBar.classList.add('bg-warning');
-            } else {
-                progressBar.classList.add('bg-info');
-            }
-        }
-    } else {
-        progressBar.style.width = '0%';
-        progressBar.textContent = '';
-    }
-}
-
-function updateButtonStates() {
-    if (isPaused) {
-        btnPause.disabled = true;
-        btnResume.disabled = false;
-    } else {
-        btnPause.disabled = false;
-        btnResume.disabled = true;
-    }
-    
-    const serviceDisabled = isProcessing || serviceErrorState;
-    
-    btnSendMessages.disabled = serviceDisabled;
-    btnSendAllMessages.disabled = serviceDisabled;
-    btnLoadGoogleSheets.disabled = serviceDisabled;
-    btnLoadCsv.disabled = serviceDisabled;
-    btnApplyFilters.disabled = serviceDisabled;
-    btnClear.disabled = serviceDisabled;
-}
-
-function showQRCode() {
-    console.log('QR code container is hidden - QR codes only shown in terminal');
-    // Keep the container hidden as QR codes are only shown in terminal
-    // qrcodeContainer.classList.remove('d-none');
-}
-
-function hideQRCode() {
-    qrcodeContainer.classList.add('d-none');
-}
-
-function generateQRCode(data) {
-    console.log('QR code generation in UI is disabled. Check your terminal for QR code.');
-    // QR code generation in UI is disabled
-}
-
-function logActivity(message, type = 'info') {
-    const timestamp = new Date().toLocaleTimeString();
-    
-    // Create a log entry that's more user-readable
-    let userFriendlyMessage = message;
-    
-    // Replace technical terms with more user-friendly ones
-    if (message.startsWith('Status:')) {
-        userFriendlyMessage = message.replace('Status:', '📋');
-    }
-    
-    // Add emojis and friendlier language based on the message type
-    if (type === 'error') {
-        userFriendlyMessage = `❌ ${userFriendlyMessage}`;
-    } else if (type === 'success') {
-        userFriendlyMessage = `✅ ${userFriendlyMessage}`;
-    } else if (type === 'warning') {
-        userFriendlyMessage = `⚠️ ${userFriendlyMessage}`;
-    } else if (type === 'info') {
-        userFriendlyMessage = `ℹ️ ${userFriendlyMessage}`;
-    }
-
-    // Create log entry element
-    const logEntry = document.createElement('div');
-    logEntry.className = `log-entry ${type}`;
-    logEntry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${userFriendlyMessage}`;
-    
-    // Add to log
-    activityLog.appendChild(logEntry);
-    activityLog.scrollTop = activityLog.scrollHeight;
-    
-    // Update progress bar if the message indicates progress
-    updateProgressIndicator(message, type);
-}
-
-// New function to update the progress indicator based on message content
-function updateProgressIndicator(message, type) {
-    // Only update progress bar for certain message types
-    if (message.includes("Loaded") || 
-        message.includes("filtered") || 
-        message.includes("Sending") ||
-        message.includes("sent") ||
-        message.includes("completed")) {
-        
-        // Extract numbers from the message when possible
-        const numbers = message.match(/\d+/g);
-        if (numbers && numbers.length >= 1) {
-            const value = parseInt(numbers[0]);
-            
-            // If we have two numbers, treat as progress (e.g., "Sent 5 of 20 messages")
-            if (numbers.length >= 2) {
-                const total = parseInt(numbers[1]);
-                if (!isNaN(value) && !isNaN(total) && total > 0) {
-                    const percentage = (value / total) * 100;
-                    progressBar.style.width = `${percentage}%`;
-                    progressBar.setAttribute('aria-valuenow', value);
-                    progressBar.setAttribute('aria-valuemax', total);
-                    
-                    // Add text inside the progress bar
-                    progressBar.textContent = `${Math.round(percentage)}% (${value}/${total})`;
-                    
-                    // Set color based on type
-                    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
-                    if (type === 'error') {
-                        progressBar.classList.add('bg-danger');
-                    } else if (type === 'success' || percentage === 100) {
-                        progressBar.classList.add('bg-success');
-                    } else if (type === 'warning') {
-                        progressBar.classList.add('bg-warning');
-                    } else {
-                        progressBar.classList.add('bg-info');
-                    }
-                }
-            } else {
-                // If we just have one number and it's a completion message, set to 100%
-                if (message.includes("completed") || message.includes("finished") || type === 'success') {
-                    progressBar.style.width = '100%';
-                    progressBar.setAttribute('aria-valuenow', 100);
-                    progressBar.textContent = 'Complete!';
-                    progressBar.classList.remove('progress-bar-animated');
-                    progressBar.classList.add('bg-success');
-                }
-            }
-        }
-    }
-}
-
-function showRestartButton() {
-    restartContainer.classList.remove('d-none');
-}
-
-function hideRestartButton() {
-    restartContainer.classList.add('d-none');
-}
-
-// Initialize the application
-function init() {
-    // Fetch initial status
-    fetch('/api/status')
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'initializing') {
-                updateWhatsAppStatus('initializing', 'Initializing...');
-                updateStatusMessage('initializing', data.message || 'Initializing WhatsApp client...');
-                
-                if (data.attempt > 1) {
-                    logActivity(`Initialization attempt ${data.attempt}/${data.maxAttempts}`, 'warning');
-                }
-            } else if (data.whatsapp) {
-                if (data.whatsapp.isReady) {
-                    updateWhatsAppStatus('ready', 'Connected');
-                    updateStatusMessage('ready', 'WhatsApp client is ready');
-                    serviceErrorState = false;
-                } else {
-                    updateWhatsAppStatus('initializing', 'Initializing...');
-                    updateStatusMessage('initializing', 'Initializing WhatsApp client...');
-                }
-                
-                if (data.messages) {
-                    updateMessageStats(data.messages);
-                }
-                
-                if (data.contacts) {
-                    updateContactStats(data.contacts);
-                }
-            } else {
-                updateStatusMessage('error', 'Could not get status from server');
-                serviceErrorState = true;
-                showRestartButton();
-                updateButtonStates();
-            }
-            
-            updateButtonStates();
-        })
-        .catch(error => {
-            logActivity(`Error fetching status: ${error.message}`, 'error');
-            updateStatusMessage('error', 'Error connecting to server');
-            serviceErrorState = true;
-            showRestartButton();
-            updateButtonStates();
-        });
-}
-
 // Call init on page load
-window.addEventListener('load', init); 
-init(); 
+init();

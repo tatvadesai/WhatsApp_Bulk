@@ -38,32 +38,21 @@ async function getGoogleSheetsClient() {
  * Fetch contact data from Google Sheets
  * @returns {Promise<Array>} Array of contact objects
  */
-async function fetchGoogleSheetData() {
+async function fetchGoogleSheetData(sheetId, sheetName) {
     try {
-        logger.info('Fetching contacts from Google Sheets...');
-        
-        // Log all available config properties for debugging
-        logger.info('Current config values:');
-        logger.info(JSON.stringify({
-            googleSheetId: config.googleSheetId,
-            googleSheetsRange: config.googleSheetsRange,
-            googleApplicationCredentials: config.googleApplicationCredentials
-        }));
+        logger.info(`Fetching contacts from Google Sheets with ID: ${sheetId}, Sheet: ${sheetName}...`);
         
         // Validate config parameters
-        if (!config.googleSheetId) {
-            throw new Error('GOOGLE_SHEETS_ID is not configured in .env file');
+        if (!sheetId) {
+            throw new Error('Google Sheet ID is required');
         }
-        
-        if (!config.googleSheetsRange) {
-            throw new Error('GOOGLE_SHEETS_RANGE is not configured in .env file');
+        if (!sheetName) {
+            throw new Error('Google Sheet Name is required');
         }
-        
-        logger.info(`Using spreadsheet ID: ${config.googleSheetId}, range: ${config.googleSheetsRange}`);
         
         const sheets = await getGoogleSheetsClient();
-        const spreadsheetId = config.googleSheetId;
-        const range = config.googleSheetsRange;
+        const spreadsheetId = sheetId;
+        const range = `${sheetName}!A:Z`; // Construct range using sheetName
         
         logger.debug(`Reading spreadsheet ID: ${spreadsheetId}, range: ${range}`);
         
@@ -124,32 +113,32 @@ async function fetchGoogleSheetData() {
     }
 }
 
+
+
 /**
- * Stream data from Google Sheets for processing large amounts of data
- * @param {Function} rowCallback - Callback function to process each row
- * @returns {Promise<void>}
+ * Lists all sheet names within a given Google Spreadsheet ID.
+ * @param {string} spreadsheetId - The ID of the Google Spreadsheet.
+ * @returns {Promise<Array<string>>} A promise that resolves with an array of sheet names.
  */
-async function streamGoogleSheetData(rowCallback) {
+async function listSheetNames(spreadsheetId) {
     try {
-        logger.info('Streaming contacts from Google Sheets...');
-        
-        const contacts = await fetchGoogleSheetData();
-        let processedCount = 0;
-        
-        // Process each contact one by one
-        for (const contact of contacts) {
-            await rowCallback(contact, processedCount);
-            processedCount++;
-        }
-        
-        logger.success(`Finished streaming ${processedCount} contacts`);
+        logger.info(`Listing sheet names for spreadsheet ID: ${spreadsheetId}...`);
+        const sheets = await getGoogleSheetsClient();
+        const response = await sheets.spreadsheets.get({
+            spreadsheetId,
+            fields: 'sheets.properties.title'
+        });
+
+        const sheetNames = response.data.sheets.map(sheet => sheet.properties.title);
+        logger.success(`Successfully retrieved ${sheetNames.length} sheet names.`);
+        return sheetNames;
     } catch (error) {
-        logger.error('Error in Google Sheets streaming', error);
-        throw error;
+        logger.error(`Error listing sheet names for spreadsheet ID ${spreadsheetId}:`, error);
+        throw new Error(`Failed to list sheet names: ${error.message}`);
     }
 }
 
 module.exports = {
     fetchGoogleSheetData,
-    streamGoogleSheetData
+    listSheetNames
 };

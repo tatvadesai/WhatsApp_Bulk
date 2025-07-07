@@ -47,10 +47,9 @@ class WhatsAppClient extends EventEmitter {
             authStrategy: new NoAuth(),
             puppeteer: puppeteerOptions,
             webVersionCache: {
-                type: 'remote', // Use remote cache for better stability
-                remotePath: './.wwebjs_cache'
+                type: 'local', // Use local cache
+                path: './.wwebjs_cache'
             },
-            // webVersion: '2.2337.7', // Remove fixed web version
             restartOnAuthFail: true, // Automatically restart on auth failure
         });
 
@@ -191,7 +190,7 @@ class WhatsAppClient extends EventEmitter {
         if (this.io) {
             this.io.emit('status', { 
                 status: 'qr_received', 
-                message: 'QR Code received. Please check your terminal to scan the QR code.'
+                message: 'QR Code received. Please scan the QR code in your terminal to connect.'
             });
         }
     }

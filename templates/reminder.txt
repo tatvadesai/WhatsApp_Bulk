@@ -1,0 +1,6 @@
+Quick reminder {firstName}!
+
+Our GatherAround dinner is tomorrow at 7 PM.
+Looking forward to seeing you there!
+
+Venue: {venue}

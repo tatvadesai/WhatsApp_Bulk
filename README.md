@@ -259,7 +259,7 @@ MESSAGE_TEMPLATE=reminder
 ALLOWED_CITIES=Vadodara,Ahmedabad,Gandhinagar
 EVENT_VENUE=The Grand Hall, Vadodara
 ```
-2. Run: `node index.js --sheet`
+2. Run: `node server.js --sheet`
 
 ## Features
 
@@ -341,13 +341,13 @@ node index.js --sheet
 ### Running with a CSV file
 
 ```bash
-node index.js --csv path/to/your/contacts.csv
+node server.js --csv path/to/your/contacts.csv
 ```
 
 ### Stream processing a CSV file (for large files)
 
 ```bash
-node index.js --stream path/to/your/contacts.csv
+node server.js --stream path/to/your/contacts.csv
 ```
 
 ## CSV File Format

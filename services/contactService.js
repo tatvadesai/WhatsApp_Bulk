@@ -1,7 +1,6 @@
 const config = require('../config');
 const logger = require('../utils/logger');
-const { fetchGoogleSheetData, streamGoogleSheetData } = require('../googleSheetsIntegration');
-const { streamCsvFile } = require('../utils/csvHandler');
+const { fetchGoogleSheetData } = require('../googleSheetsIntegration');
 const EventEmitter = require('events');
 
 class ContactService extends EventEmitter {
@@ -11,11 +10,15 @@ class ContactService extends EventEmitter {
         this.io = io;
         this.contacts = [];
         this.filteredContacts = [];
+        this.currentFilterOptions = { cities: [], blockedNumbers: [] }; // Store current filter options
+        this.paidLabel = null; // Cache for the paid label
     }
 
-    async loadContactsFromGoogleSheets() {
+    
+
+    async loadContactsFromGoogleSheets(sheetId, sheetName) {
         try {
-            logger.info('Loading contacts from Google Sheets...');
+            logger.info(`Loading contacts from Google Sheets with ID: ${sheetId}, Sheet: ${sheetName}...`);
             
             if (this.io) {
                 this.io.emit('status', { 
@@ -24,27 +27,34 @@ class ContactService extends EventEmitter {
                 });
             }
             
-            const contacts = await fetchGoogleSheetData();
+            const contacts = await fetchGoogleSheetData(sheetId, sheetName);
             
-            // Debug: Log sample contact
-            if (contacts.length > 0) {
-                logger.info(`Sample contact fields: ${Object.keys(contacts[0]).join(', ')}`);
-                logger.info(`Sample contact data: ${JSON.stringify(contacts[0])}`);
+            // Normalize contact data immediately after loading
+            const normalizedContacts = contacts.map(contact => this._normalizeContact(contact));
+
+            // Debug: Log sample normalized contact
+            if (normalizedContacts.length > 0) {
+                logger.info(`Sample normalized contact fields: ${Object.keys(normalizedContacts[0]).join(', ')}`);
+                logger.info(`Sample normalized contact data: ${JSON.stringify(normalizedContacts[0])}`);
             }
             
-            this.contacts = contacts;
+            this.contacts = normalizedContacts;
+            this.filteredContacts = []; // Reset filtered contacts on new sheet load
             
-            logger.info(`Loaded ${contacts.length} contacts from Google Sheets`);
-            this.emit('contacts_loaded', contacts.length);
+            // Re-apply current filters to the new set of contacts
+            await this.filterContacts(this.currentFilterOptions);
+            
+            logger.info(`Loaded ${normalizedContacts.length} contacts from Google Sheets`);
+            this.emit('contacts_loaded', normalizedContacts.length);
             
             if (this.io) {
-                this.io.emit('status', { 
+                this.io.emit('status', {
                     status: 'contacts_loaded', 
-                    message: `Loaded ${contacts.length} contacts from Google Sheets` 
+                    message: `Loaded ${normalizedContacts.length} contacts from Google Sheets` 
                 });
             }
             
-            return contacts;
+            return normalizedContacts;
         } catch (error) {
             logger.error('Error loading contacts from Google Sheets:', error);
             this.emit('error', error);
@@ -60,62 +70,16 @@ class ContactService extends EventEmitter {
         }
     }
 
-    async loadContactsFromCsv(filePath) {
-        try {
-            logger.info(`Loading contacts from CSV file: ${filePath}`);
-            
-            if (this.io) {
-                this.io.emit('status', { 
-                    status: 'loading', 
-                    message: 'Loading contacts from CSV file...' 
-                });
-            }
-            
-            const contacts = [];
-            
-            await new Promise((resolve, reject) => {
-                streamCsvFile(filePath, (contact) => {
-                    contacts.push(contact);
-                })
-                .then(() => resolve())
-                .catch(err => reject(err));
-            });
-            
-            this.contacts = contacts;
-            
-            logger.info(`Loaded ${contacts.length} contacts from CSV`);
-            this.emit('contacts_loaded', contacts.length);
-            
-            if (this.io) {
-                this.io.emit('status', { 
-                    status: 'contacts_loaded', 
-                    message: `Loaded ${contacts.length} contacts from CSV` 
-                });
-            }
-            
-            return contacts;
-        } catch (error) {
-            logger.error('Error loading contacts from CSV:', error);
-            this.emit('error', error);
-            
-            if (this.io) {
-                this.io.emit('status', { 
-                    status: 'error', 
-                    message: 'Error loading contacts: ' + error.message 
-                });
-            }
-            
-            throw error;
-        }
-    }
-
     async filterContacts(options = {}) {
         const { 
-            cities = [], 
-            blockedNumbers = [],
+            cities = this.currentFilterOptions.cities, // Use stored cities if not provided
+            blockedNumbers = this.currentFilterOptions.blockedNumbers, // Use stored blockedNumbers if not provided
             applyFilters = true,
             debugMode = false
         } = options;
+
+        // Update stored filter options
+        this.currentFilterOptions = { cities, blockedNumbers };
         
         const debugMessages = [];
         const addDebugMessage = (message) => {
@@ -158,9 +122,15 @@ class ContactService extends EventEmitter {
                     const contactNumber = (contact.number || contact.phone || contact.phoneNumber || contact.phone_number || '').toString();
                     if (!contactNumber) return false;
                     
-                    return !blockedNumbers.some(blockedNum => 
-                        contactNumber.includes(blockedNum)
-                    );
+                    // Clean the contact number
+                    const cleanContactNumber = contactNumber.replace(/[^\d]/g, '');
+                    
+                    // Check if any blocked number matches (in either direction)
+                    return !blockedNumbers.some(blockedNum => {
+                        // Clean the blocked number
+                        const cleanBlockedNum = blockedNum.replace(/[^\d]/g, '');
+                        return cleanContactNumber.includes(cleanBlockedNum) || cleanBlockedNum.includes(cleanContactNumber);
+                    });
                 });
                 logger.info(`Filtered to ${filtered.length} contacts after removing blocked numbers`);
             }
@@ -316,12 +286,20 @@ class ContactService extends EventEmitter {
                 const contactNumber = (contact.number || contact.phone || contact.phoneNumber || contact.phone_number || '').toString();
                 if (!contactNumber) return false;
                 
-                return !blockedNumbers.some(blockedNum => 
-                    contactNumber.includes(blockedNum)
-                );
+                // Clean the contact number
+                const cleanContactNumber = contactNumber.replace(/[^\d]/g, '');
+                
+                // Check if any blocked number matches (in either direction)
+                return !blockedNumbers.some(blockedNum => {
+                    // Clean the blocked number
+                    const cleanBlockedNum = blockedNum.replace(/[^\d]/g, '');
+                    return cleanContactNumber.includes(cleanBlockedNum) || cleanBlockedNum.includes(cleanContactNumber);
+                });
             });
             logger.info(`Filtered to ${filtered.length} contacts after removing blocked numbers`);
         }
+
+        
         
         this.filteredContacts = filtered;
         
@@ -356,6 +334,31 @@ class ContactService extends EventEmitter {
 
     // Helper functions to improve city matching
     
+    // Normalize contact data from various possible column names
+    _normalizeContact(contact) {
+        const normalized = { ...contact }; // Start with all original properties
+        const lowerCaseContact = {};
+        for (const key in contact) {
+            lowerCaseContact[key.toLowerCase()] = contact[key];
+        }
+
+        // Prioritize common names for firstName
+        if (lowerCaseContact.firstname) normalized.firstName = lowerCaseContact.firstname;
+        else if (lowerCaseContact.first_name) normalized.firstName = lowerCaseContact.first_name;
+        else if (lowerCaseContact.name) normalized.firstName = lowerCaseContact.name; // Fallback to 'name'
+        else if (lowerCaseContact.fullname) normalized.firstName = lowerCaseContact.fullname.split(' ')[0]; // Extract from fullname
+        else normalized.firstName = ''; // Default to empty string if nothing found
+
+        // Prioritize common names for number
+        if (lowerCaseContact.number) normalized.number = lowerCaseContact.number;
+        else if (lowerCaseContact.phone) normalized.number = lowerCaseContact.phone;
+        else if (lowerCaseContact.phonenumber) normalized.number = lowerCaseContact.phonenumber;
+        else if (lowerCaseContact.mobile) normalized.number = lowerCaseContact.mobile;
+        else if (lowerCaseContact.whatsapp) normalized.number = lowerCaseContact.whatsapp;
+        
+        return normalized;
+    }
+
     // Attempt to extract city from a full address string
     extractCityFromAddress(address) {
         if (!address) return '';
@@ -401,4 +404,4 @@ class ContactService extends EventEmitter {
     }
 }
 
-module.exports = ContactService; 
+module.exports = ContactService;

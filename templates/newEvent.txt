@@ -1,0 +1,12 @@
+Hello {firstName}!
+
+We're excited to announce a new GatherAround event: {eventName}!
+
+📅 Date: {eventDate}
+📍 Location: {venue}
+🕖 Time: {eventTime}
+
+Would you like to join us? Let me know and I'll reserve your spot!
+
+Best,
+Tatva

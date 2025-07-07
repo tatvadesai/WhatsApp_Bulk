@@ -61,7 +61,7 @@ const LOG_LEVELS = {
 };
 
 // Get the configured log level or default to 'info'
-const configuredLevel = (config.LOG_LEVEL || 'info').toLowerCase();
+const configuredLevel = (config.logLevel || 'info').toLowerCase();
 const currentLevelValue = LOG_LEVELS[configuredLevel] || LOG_LEVELS.info;
 
 // Check if we should log this level based on configuration
@@ -75,7 +75,7 @@ const logger = {
         if (!shouldLog('debug')) return;
         
         const formattedMessage = formatLogMessage('DEBUG', message);
-        if (config.DEBUG_MODE) console.log(`🔍 ${message}`);
+        if (config.debugMode) console.log(`🔍 ${message}`);
         
         try {
             getLogStream().write(formattedMessage);
@@ -129,7 +129,7 @@ const logger = {
         let logMessage = message;
         if (error) {
             logMessage += ` | ${error.message}`;
-            if (config.DEBUG_MODE && error.stack) {
+            if (config.debugMode && error.stack) {
                 logMessage += `\n${error.stack}`;
             }
         }
@@ -166,4 +166,4 @@ process.on('SIGTERM', () => {
     logger.cleanup();
 });
 
-module.exports = logger; 
+module.exports = logger;

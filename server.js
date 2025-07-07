@@ -11,6 +11,8 @@ const logger = require('./utils/logger');
 const WhatsAppClient = require('./services/whatsappClient');
 const MessageService = require('./services/messageService');
 const ContactService = require('./services/contactService');
+const templateManager = require('./templates'); // Import the new template manager
+const { listSheetNames } = require('./googleSheetsIntegration'); // Corrected import
 
 // Initialize Express app
 const app = express();
@@ -198,13 +200,20 @@ app.post('/api/restart', (req, res) => {
 });
 
 // Load contacts from Google Sheets
-app.post('/api/contacts/google-sheets', async (req, res) => {
+app.post('/api/contacts/google-sheets', checkServices, async (req, res) => {
     try {
         if (!contactService) {
             return res.status(500).json({ error: 'Services not initialized' });
         }
+        const { sheetId, sheetName } = req.body;
+        if (!sheetId) {
+            return res.status(400).json({ error: 'Google Sheet ID is required' });
+        }
+        if (!sheetName) {
+            return res.status(400).json({ error: 'Google Sheet Name is required' });
+        }
         
-        const contacts = await contactService.loadContactsFromGoogleSheets();
+        const contacts = await contactService.loadContactsFromGoogleSheets(sheetId, sheetName);
         res.json({ success: true, count: contacts.length });
     } catch (error) {
         logger.error('Error loading contacts from Google Sheets:', error);
@@ -212,23 +221,62 @@ app.post('/api/contacts/google-sheets', async (req, res) => {
     }
 });
 
-// Load contacts from CSV
-app.post('/api/contacts/csv', async (req, res) => {
+// API for Template Management
+app.get('/api/templates', async (req, res) => {
     try {
-        if (!contactService) {
-            return res.status(500).json({ error: 'Services not initialized' });
-        }
-        
-        const { filePath } = req.body;
-        if (!filePath) {
-            return res.status(400).json({ error: 'File path is required' });
-        }
-        
-        const contacts = await contactService.loadContactsFromCsv(filePath);
-        res.json({ success: true, count: contacts.length });
+        const templates = await templateManager.getAllTemplateNames();
+        res.json({ success: true, templates });
     } catch (error) {
-        logger.error('Error loading contacts from CSV:', error);
-        res.status(500).json({ error: error.message });
+        logger.error('Error getting all templates:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/templates/:name', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const content = await templateManager.getTemplateContent(name);
+        if (content !== null) {
+            res.json({ success: true, content });
+        } else {
+            res.status(404).json({ success: false, error: 'Template not found' });
+        }
+    } catch (error) {
+        logger.error(`Error getting template ${req.params.name}:`, error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/templates', async (req, res) => {
+    try {
+        const { name, content } = req.body;
+        if (!name || !content) {
+            return res.status(400).json({ success: false, error: 'Template name and content are required' });
+        }
+        const saved = await templateManager.saveTemplate(name, content);
+        if (saved) {
+            res.json({ success: true, message: 'Template saved successfully' });
+        } else {
+            res.status(500).json({ success: false, error: 'Failed to save template' });
+        }
+    } catch (error) {
+        logger.error('Error saving template:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/api/templates/:name', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const deleted = await templateManager.deleteTemplate(name);
+        if (deleted) {
+            res.json({ success: true, message: 'Template deleted successfully' });
+        } else {
+            res.status(404).json({ success: false, error: 'Template not found or failed to delete' });
+        }
+    } catch (error) {
+        logger.error(`Error deleting template ${req.params.name}:`, error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -295,6 +343,10 @@ app.post('/api/contacts/filter', async (req, res) => {
             options.blockedNumbers = options.blockedNumbers
                 .map(num => num.trim())
                 .filter(num => num.length > 0);
+                
+            if (options.blockedNumbers.length > 0) {
+                logger.info(`Filtering with ${options.blockedNumbers.length} blocked numbers`);
+            }
         }
         
         // Enable debug mode if requested
@@ -324,7 +376,7 @@ app.post('/api/contacts/filter', async (req, res) => {
 });
 
 // Send messages to filtered contacts
-app.post('/api/messages/send', async (req, res) => {
+app.post('/api/messages/send', checkServices, async (req, res) => {
     try {
         if (!messageService || !contactService) {
             return res.status(500).json({ error: 'Services not initialized' });
@@ -472,10 +524,25 @@ function checkServices(req, res, next) {
 
 // Apply middleware to API routes that require initialized services
 app.post('/api/contacts/google-sheets', checkServices);
-app.post('/api/contacts/csv', checkServices);
+
+// API endpoint to list sheet names
+app.get('/api/google-sheets/sheets', checkServices, async (req, res) => {
+    try {
+        const { sheetId } = req.query;
+        if (!sheetId) {
+            return res.status(400).json({ success: false, error: 'Google Sheet ID is required' });
+        }
+        const sheetNames = await listSheetNames(sheetId);
+        res.json({ success: true, sheets: sheetNames });
+    } catch (error) {
+        logger.error('Error listing Google Sheet names:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/contacts/filter', checkServices);
 app.post('/api/messages/send', checkServices);
 app.post('/api/messages/send-all', checkServices);
 app.post('/api/messages/pause', checkServices);
 app.post('/api/messages/resume', checkServices);
-app.post('/api/messages/clear', checkServices); 
+app.post('/api/messages/clear', checkServices);

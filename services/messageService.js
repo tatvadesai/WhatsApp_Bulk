@@ -2,8 +2,8 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const { formatMessage, prepareContactMessage } = require('../utils/messageFormatter');
 const RateLimiter = require('../utils/rateLimiter');
-const templates = require('../templates');
-const { saveFailedContacts } = require('../utils/csvHandler');
+const templateManager = require('../templates');
+
 const EventEmitter = require('events');
 
 class MessageService extends EventEmitter {
@@ -30,7 +30,6 @@ class MessageService extends EventEmitter {
             throw new Error('WhatsApp client is not ready');
         }
 
-        // Reset stats for new batch
         this.stats = {
             total: contacts.length,
             sent: 0,
@@ -41,8 +40,11 @@ class MessageService extends EventEmitter {
         // Update UI with initial stats
         this._updateStats();
 
-        // Get template
-        const template = templates[templateName] || templates.default;
+        // Get template content dynamically
+        const template = await templateManager.getTemplateContent(templateName);
+        if (!template) {
+            throw new Error(`Template '${templateName}' not found.`);
+        }
         
         // Queue all messages
         for (const contact of contacts) {
@@ -139,25 +141,7 @@ class MessageService extends EventEmitter {
                     logger.debug(`Processing contact: ${JSON.stringify(contact)}`);
                     
                     // Ensure contact has necessary fields and normalize field names
-                    const enhancedContact = {
-                        firstName: 'there', // Default value
-                        number: '', // Will be validated later
-                        ...contact // Override with actual values if available
-                    };
-                    
-                    // Try to find a phone number in different possible field names
-                    if (!enhancedContact.number) {
-                        // Check all possible phone field names
-                        const possiblePhoneFields = ['phone', 'phonenumber', 'mobile', 'cell', 'cellphone', 'contact', 'whatsapp'];
-                        
-                        for (const field of possiblePhoneFields) {
-                            if (contact[field] && contact[field].toString().trim() !== '') {
-                                enhancedContact.number = contact[field];
-                                logger.debug(`Found phone number in field '${field}': ${enhancedContact.number}`);
-                                break;
-                            }
-                        }
-                    }
+                    const enhancedContact = { ...contact };
                     
                     // Skip if contact doesn't have a number
                     if (!enhancedContact.number) {
@@ -226,10 +210,7 @@ class MessageService extends EventEmitter {
                 await new Promise(resolve => setTimeout(resolve, config.messageDelay || 5000));
             }
             
-            // Save failed contacts
-            if (failedContacts.length > 0) {
-                await saveFailedContacts(failedContacts);
-            }
+            
             
             // Delay between batches
             if (this.messageQueue.length > 0) {
