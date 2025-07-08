@@ -31,9 +31,20 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configure Multer for file uploads
+// Configure Multer for file uploads to preserve file extensions
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, './temp_uploads/');
+    },
+    filename: function (req, file, cb) {
+        // Create a unique filename with the original extension
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
 const upload = multer({
-    dest: './temp_uploads/', // Temporary directory for uploaded files
+    storage: storage,
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB file size limit
 });
 

@@ -146,8 +146,8 @@ class WhatsAppClient extends EventEmitter {
             }
 
             if (imageUrl) {
-                logger.info(`Sending image from URL: ${imageUrl}`);
-                const media = await MessageMedia.fromUrl(imageUrl);
+                logger.info(`Sending image from path: ${imageUrl}`);
+                const media = MessageMedia.fromFilePath(imageUrl);
                 await this.client.sendMessage(chatId, media, { caption: messageContent });
                 logger.info(`Successfully sent image to ${to}`);
             } else {

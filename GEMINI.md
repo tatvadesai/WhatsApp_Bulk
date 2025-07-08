@@ -2,6 +2,13 @@
 
 This project is a WhatsApp Mass Messenger with a web interface, designed to send personalized messages to contacts.
 
+## Recent Changes (July 2025)
+
+*   **Fixed Image Uploads:** Resolved an issue where images uploaded from the local machine were being sent as documents instead of viewable images. The file upload logic was updated to preserve the original file extension, ensuring WhatsApp correctly interprets the file type.
+*   **Corrected Image Path Handling:** Fixed a bug where the application was trying to send local images using a URL path instead of an absolute file path. The code now correctly resolves the local file path, allowing the WhatsApp service to send the image.
+*   **Resolved JavaScript Errors:** Fixed a "Cannot read properties of null" error in the frontend JavaScript by correctly declaring and referencing the `googleSheetName` element. This ensures the Google Sheet integration works as expected.
+*   **Added Debug Logging:** Implemented logging for incoming server requests and image uploads to help diagnose and troubleshoot issues more effectively.
+
 ## Key Features:
 - Send personalized messages.
 - Google Sheets integration for contact management (including sheet selection).
@@ -13,7 +20,6 @@ This project is a WhatsApp Mass Messenger with a web interface, designed to send
 
 ## Removed Functionality:
 - CSV file import/export.
-- "Filter by Paid" contact functionality.
 - "Filter by Paid" contact functionality.
 
 ## Important Notes for Gemini:

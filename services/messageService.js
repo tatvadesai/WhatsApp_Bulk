@@ -1,3 +1,4 @@
+const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { formatMessage, prepareContactMessage } = require('../utils/messageFormatter');
@@ -137,6 +138,10 @@ class MessageService extends EventEmitter {
                     
                     // Prepare message
                     const { contact, template, customData, imagePath } = item;
+                    let absoluteImagePath = null;
+                    if (imagePath) {
+                        absoluteImagePath = path.resolve(imagePath);
+                    }
                     
                     // Log the contact for debugging
                     logger.debug(`Processing contact: ${JSON.stringify(contact)}`);
@@ -165,7 +170,7 @@ class MessageService extends EventEmitter {
                     const messageObj = prepareContactMessage(enhancedContact, template, customData);
                     
                     // Send message
-                    await this.whatsappClient.sendMessage(enhancedContact.number, messageObj.message, imagePath);
+                    await this.whatsappClient.sendMessage(enhancedContact.number, messageObj.message, absoluteImagePath);
                     
                     // Update stats
                     this.stats.sent++;
