@@ -28,3 +28,19 @@ This project is a WhatsApp Mass Messenger with a web interface, designed to send
 - Always prioritize user control and project conventions.
 - When making changes, ensure consistency across frontend and backend.
 - Be mindful of Node.js caching issues; advise `npm cache clean --force`, `rm -rf node_modules`, `npm install` if unexpected errors occur.
+
+## Future Enhancements:
+
+### 1. Enhanced Error Reporting & Failed Message Management:
+- **UI Display:** Integrate a section in the UI to display recent failed messages, including the contact and the reason for failure.
+- **Retry Mechanism:** Implement a feature to easily retry sending messages to contacts that previously failed.
+- **Export Failed Messages:** Provide a button to download the `failed-messages-*.csv` logs directly from the UI.
+
+### 2. Message Scheduling:
+- Allow users to schedule message campaigns to be sent at a specific date and time in the future, rather than immediately.
+
+### 3. Advanced Personalization:
+- Explore more complex personalization options beyond simple `{variable}` replacement, such as conditional logic within templates (e.g., "If city is X, say Y, else say Z").
+
+### 4. User-Configurable Rate Limiting:
+- Expose the `MAX_MESSAGES_PER_MINUTE` setting (currently in `config.js`) in the UI, allowing users to adjust it based on their needs and WhatsApp's policies.

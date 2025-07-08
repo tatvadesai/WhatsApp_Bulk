@@ -26,13 +26,14 @@ const btnPause = document.getElementById('btn-pause');
 const btnResume = document.getElementById('btn-resume');
 const btnClear = document.getElementById('btn-clear');
 const btnLoadGoogleSheets = document.getElementById('btn-load-google-sheets');
-const googleSheetId = document.getElementById('google-sheet-id');
 const googleSheetName = document.getElementById('google-sheet-name');
+
 const btnApplyFilters = document.getElementById('btn-apply-filters'); // Added
 
 const filterPaidContacts = document.getElementById('filter-paid-contacts');
 const btnSendMessages = document.getElementById('btn-send-messages');
 const btnSendAllMessages = document.getElementById('btn-send-all-messages');
+const imageUpload = document.getElementById('image-upload');
 
 // Input Elements
 
@@ -196,6 +197,14 @@ socket.on('contacts', (stats) => {
     updateContactStats(stats);
 });
 
+socket.on('message_sent', (data) => {
+    logActivity(`Message sent to ${data.fullName}`, 'success');
+});
+
+socket.on('message_failed', (data) => {
+    logActivity(`Failed to send message to ${data.contact.firstName || ''} ${data.contact.lastName || ''} (${data.contact.number}): ${data.error.message || data.error}`, 'error');
+});
+
 // Button event listeners
 btnPause.addEventListener('click', () => {
     fetch('/api/messages/pause', {
@@ -257,37 +266,48 @@ btnClear.addEventListener('click', () => {
     }
 });
 
-btnLoadGoogleSheets.addEventListener('click', () => {
-    const sheetId = googleSheetId.value.trim();
+btnLoadGoogleSheets.addEventListener('click', async () => {
     const sheetName = googleSheetName.value.trim();
 
-    if (!sheetId) {
-        logActivity('Please enter a Google Sheet ID', 'error');
-        return;
-    }
     if (!sheetName) {
         logActivity('Please select a Google Sheet Name', 'error');
         return;
     }
 
-    fetch('/api/contacts/google-sheets', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ sheetId, sheetName })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            logActivity(`Loaded ${data.count} contacts from Google Sheets`, 'success');
+    try {
+        const response = await fetch('/api/google-sheet-id');
+        const data = await response.json();
+        if (data.sheetId) {
+            const sheetId = data.sheetId;
+            fetch('/api/contacts/google-sheets', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ sheetId, sheetName })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    logActivity(`Loaded ${data.count} contacts from Google Sheets`, 'success');
+                    // Reset message stats when a new sheet is loaded
+                    totalMessages.textContent = 0;
+                    sentMessages.textContent = 0;
+                    failedMessages.textContent = 0;
+                    skippedMessages.textContent = 0;
+                } else {
+                    logActivity(`Error: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                logActivity(`Error loading contacts: ${error.message}`, 'error');
+            });
         } else {
-            logActivity(`Error: ${data.error}`, 'error');
+            logActivity('Could not find Google Sheet ID', 'error');
         }
-    })
-    .catch(error => {
-        logActivity(`Error loading contacts: ${error.message}`, 'error');
-    });
+    } catch (error) {
+        logActivity('Error fetching Google Sheet ID', 'error');
+    }
 });
 
 
@@ -475,8 +495,34 @@ const debouncedFilter = debounce(() => {
 filterCities.addEventListener('input', debouncedFilter);
 filterBlockedNumbers.addEventListener('input', debouncedFilter);
 
-btnSendMessages.addEventListener('click', () => {
+btnSendMessages.addEventListener('click', async () => {
     const template = messageTemplate.value;
+    const imageFile = imageUpload.files[0];
+    let imagePath = null;
+
+    if (imageFile) {
+        const formData = new FormData();
+        formData.append('image', imageFile);
+
+        try {
+            logActivity('Uploading image...', 'info');
+            const uploadResponse = await fetch('/api/upload-image', {
+                method: 'POST',
+                body: formData
+            });
+            const uploadData = await uploadResponse.json();
+            if (uploadData.success) {
+                imagePath = uploadData.imagePath;
+                logActivity(`Image uploaded: ${imagePath}`, 'success');
+            } else {
+                logActivity(`Image upload failed: ${uploadData.error}`, 'error');
+                return; // Stop if image upload fails
+            }
+        } catch (error) {
+            logActivity(`Error uploading image: ${error.message}`, 'error');
+            return; // Stop if image upload fails
+        }
+    }
     
     // Prepare custom data based on template
     let customData = {};
@@ -525,7 +571,8 @@ btnSendMessages.addEventListener('click', () => {
         },
         body: JSON.stringify({
             templateName: template,
-            customData
+            customData,
+            imagePath // Include imagePath in the request
         })
     })
     .then(response => response.json())
@@ -544,12 +591,38 @@ btnSendMessages.addEventListener('click', () => {
 });
 
 // Handler for Send to ALL Contacts button
-btnSendAllMessages.addEventListener('click', () => {
+btnSendAllMessages.addEventListener('click', async () => {
     const template = messageTemplate.value;
-    
+    const imageFile = imageUpload.files[0];
+    let imagePath = null;
+
     // Confirm with user due to potentially large number of messages
     if (!confirm('Are you sure you want to send messages to ALL contacts? This will bypass city filters.')) {
         return;
+    }
+
+    if (imageFile) {
+        const formData = new FormData();
+        formData.append('image', imageFile);
+
+        try {
+            logActivity('Uploading image...', 'info');
+            const uploadResponse = await fetch('/api/upload-image', {
+                method: 'POST',
+                body: formData
+            });
+            const uploadData = await uploadResponse.json();
+            if (uploadData.success) {
+                imagePath = uploadData.imagePath;
+                logActivity(`Image uploaded: ${imagePath}`, 'success');
+            } else {
+                logActivity(`Image upload failed: ${uploadData.error}`, 'error');
+                return; // Stop if image upload fails
+            }
+        } catch (error) {
+            logActivity(`Error uploading image: ${error.message}`, 'error');
+            return; // Stop if image upload fails
+        }
     }
     
     // Prepare custom data based on template
@@ -600,7 +673,8 @@ btnSendAllMessages.addEventListener('click', () => {
         },
         body: JSON.stringify({
             templateName: template,
-            customData
+            customData,
+            imagePath // Include imagePath in the request
         })
     })
     .then(response => response.json())
@@ -760,17 +834,18 @@ async function deleteTemplate() {
     }
 }
 
-// Initialization function
-function init() {
+async function init() {
     // Initial button states
     updateButtonStates();
     // Load templates into dropdown on page load
     loadTemplatesIntoDropdown();
 
-    // Event listener for Google Sheet ID input to load sheet names
-    googleSheetId.addEventListener('input', async () => {
-        const sheetId = googleSheetId.value.trim();
-        if (sheetId) {
+    // Fetch the Google Sheet ID from the server and load sheets
+    try {
+        const response = await fetch('/api/google-sheet-id');
+        const data = await response.json();
+        if (data.sheetId) {
+            const sheetId = data.sheetId;
             try {
                 const response = await fetch(`/api/google-sheets/sheets?sheetId=${sheetId}`);
                 const data = await response.json();
@@ -784,6 +859,32 @@ function init() {
                     });
                     googleSheetName.disabled = false;
                     logActivity(`Loaded ${data.sheets.length} sheets for ID: ${sheetId}`, 'success');
+                    // Automatically load contacts for the first sheet
+                    if (data.sheets.length > 0) {
+                        const firstSheetName = data.sheets[0];
+                        fetch('/api/contacts/google-sheets', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ sheetId, sheetName: firstSheetName })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                logActivity(`Loaded ${data.count} contacts from Google Sheets (initial load)`, 'success');
+                                totalMessages.textContent = 0;
+                                sentMessages.textContent = 0;
+                                failedMessages.textContent = 0;
+                                skippedMessages.textContent = 0;
+                            } else {
+                                logActivity(`Error loading contacts (initial load): ${data.error}`, 'error');
+                            }
+                        })
+                        .catch(error => {
+                            logActivity(`Error loading contacts (initial load): ${error.message}`, 'error');
+                        });
+                    }
                 } else {
                     logActivity(`Error loading sheets: ${data.error}`, 'error');
                     googleSheetName.innerHTML = '<option value="">Error loading sheets</option>';
@@ -794,11 +895,12 @@ function init() {
                 googleSheetName.innerHTML = '<option value="">Error fetching sheets</option>';
                 googleSheetName.disabled = true;
             }
-        } else {
-            googleSheetName.innerHTML = '<option value="">Load Sheet ID first</option>';
-            googleSheetName.disabled = true;
         }
-    });
+    } catch (error) {
+        logActivity('Error fetching Google Sheet ID', 'error');
+    }
+
+    
 
     // Event listener for restart service button
     btnRestartService.addEventListener('click', () => {

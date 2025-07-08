@@ -25,7 +25,7 @@ class MessageService extends EventEmitter {
         };
     }
 
-    async sendBatchMessages(contacts, templateName, customData = {}) {
+    async sendBatchMessages(contacts, templateName, customData = {}, imagePath = null) {
         if (!this.whatsappClient.isReady) {
             throw new Error('WhatsApp client is not ready');
         }
@@ -51,7 +51,8 @@ class MessageService extends EventEmitter {
             this.messageQueue.push({
                 contact,
                 template,
-                customData
+                customData,
+                imagePath // Pass imagePath to the queue item
             });
         }
 
@@ -135,7 +136,7 @@ class MessageService extends EventEmitter {
                     await this.rateLimiter.throttle();
                     
                     // Prepare message
-                    const { contact, template, customData } = item;
+                    const { contact, template, customData, imagePath } = item;
                     
                     // Log the contact for debugging
                     logger.debug(`Processing contact: ${JSON.stringify(contact)}`);
@@ -164,14 +165,13 @@ class MessageService extends EventEmitter {
                     const messageObj = prepareContactMessage(enhancedContact, template, customData);
                     
                     // Send message
-                    await this.whatsappClient.sendMessage(enhancedContact.number, messageObj.message);
+                    await this.whatsappClient.sendMessage(enhancedContact.number, messageObj.message, imagePath);
                     
                     // Update stats
                     this.stats.sent++;
-                    this._updateStats();
                     
                     // Emit event
-                    this.emit('message_sent', { contact, message: messageObj.message });
+                    this.emit('message_sent', { contact, message: messageObj.message, fullName: `${contact.firstName || ''} ${contact.lastName || ''}`.trim() });
                     
                     // Log success
                     logger.info(`Message sent to ${contact.firstName} (${contact.number})`);
@@ -179,7 +179,7 @@ class MessageService extends EventEmitter {
                     // Send a progress update every 5 messages
                     if (this.stats.sent % 5 === 0) {
                         const progress = (this.stats.sent + this.stats.failed + this.stats.skipped);
-                        const total = progress + this.messageQueue.length;
+                        const total = this.stats.total;
                         if (this.io) {
                             this.io.emit('status', { 
                                 status: 'progress', 
@@ -191,7 +191,6 @@ class MessageService extends EventEmitter {
                 } catch (error) {
                     // Update stats
                     this.stats.failed++;
-                    this._updateStats();
                     
                     // Add to failed contacts
                     failedContacts.push({
@@ -205,6 +204,9 @@ class MessageService extends EventEmitter {
                     // Log error
                     logger.error(`Failed to send message to ${item.contact.firstName} (${item.contact.number}):`, error);
                 }
+                
+                // Update stats after every message attempt
+                this._updateStats();
                 
                 // Small delay between messages in the same batch
                 await new Promise(resolve => setTimeout(resolve, config.messageDelay || 5000));

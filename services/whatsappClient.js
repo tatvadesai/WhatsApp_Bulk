@@ -1,4 +1,4 @@
-const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, NoAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -127,7 +127,7 @@ class WhatsAppClient extends EventEmitter {
         return this;
     }
 
-    async sendMessage(to, message) {
+    async sendMessage(to, message, imageUrl = null) {
         if (!this.isReady) {
             throw new Error('WhatsApp client is not ready');
         }
@@ -140,17 +140,22 @@ class WhatsAppClient extends EventEmitter {
             const chatId = this._formatNumber(to);
             logger.debug(`Sending message to ${to} (formatted as ${chatId})`);
             
-            // Handle both string and object messages
             let messageContent = message;
             if (typeof message === 'object' && message.message) {
                 messageContent = message.message;
             }
-            
-            logger.debug(`Message content: ${messageContent.substring(0, 50)}${messageContent.length > 50 ? '...' : ''}`);
-            
-            const result = await this.client.sendMessage(chatId, messageContent);
-            logger.info(`Successfully sent message to ${to}`);
-            return result;
+
+            if (imageUrl) {
+                logger.info(`Sending image from URL: ${imageUrl}`);
+                const media = await MessageMedia.fromUrl(imageUrl);
+                await this.client.sendMessage(chatId, media, { caption: messageContent });
+                logger.info(`Successfully sent image to ${to}`);
+            } else {
+                logger.debug(`Message content: ${messageContent.substring(0, 50)}${messageContent.length > 50 ? '...' : ''}`);
+                await this.client.sendMessage(chatId, messageContent);
+                logger.info(`Successfully sent message to ${to}`);
+            }
+            return true;
         } catch (error) {
             logger.error(`Failed to send message to ${to}:`, error);
             throw error;

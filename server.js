@@ -4,6 +4,8 @@ const socketIo = require('socket.io');
 const path = require('path');
 const qrcode = require('qrcode');
 const fs = require('fs');
+const multer = require('multer');
+require('dotenv').config(); // Load .env file
 const config = require('./config');
 const logger = require('./utils/logger');
 
@@ -22,6 +24,35 @@ const io = socketIo(server);
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
+
+// Middleware to log all incoming requests for debugging
+app.use((req, res, next) => {
+    logger.info(`Received request: ${req.method} ${req.url}`);
+    next();
+});
+
+// Configure Multer for file uploads
+const upload = multer({
+    dest: './temp_uploads/', // Temporary directory for uploaded files
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB file size limit
+});
+
+// Ensure the temp_uploads directory exists
+if (!fs.existsSync('./temp_uploads/')) {
+    fs.mkdirSync('./temp_uploads/');
+}
+
+// API endpoint for image upload
+app.post('/api/upload-image', upload.single('image'), (req, res) => {
+    logger.info('Request received for /api/upload-image'); // Added for debugging
+    if (!req.file) {
+        logger.error('No image file provided in the request.'); // Added for debugging
+        return res.status(400).json({ success: false, error: 'No image file provided.' });
+    }
+    // Return the path to the uploaded file
+    logger.info(`Image uploaded successfully: ${req.file.path}`); // Added for debugging
+    res.json({ success: true, imagePath: req.file.path });
+});
 
 // Initialize services
 let whatsappClient;
@@ -199,6 +230,26 @@ app.post('/api/restart', (req, res) => {
     }
 });
 
+// API endpoint to get the Google Sheet ID from .env
+app.get('/api/google-sheet-id', (req, res) => {
+    res.json({ sheetId: '1T8GIGrEqln4vKCxgy1Itb9nOLHHr8q2HylMK46wQHRc' });
+});
+
+// API endpoint to list sheet names
+app.get('/api/google-sheets/sheets', async (req, res) => {
+    try {
+        const { sheetId } = req.query;
+        if (!sheetId) {
+            return res.status(400).json({ success: false, error: 'Google Sheet ID is required' });
+        }
+        const sheetNames = await listSheetNames(sheetId);
+        res.json({ success: true, sheets: sheetNames });
+    } catch (error) {
+        logger.error('Error listing Google Sheet names:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Load contacts from Google Sheets
 app.post('/api/contacts/google-sheets', checkServices, async (req, res) => {
     try {
@@ -317,7 +368,7 @@ app.get('/api/contacts/data', (req, res) => {
 });
 
 // Filter contacts - enhance to support debug mode
-app.post('/api/contacts/filter', async (req, res) => {
+app.post('/api/contacts/filter', checkServices, async (req, res) => {
     try {
         if (!contactService) {
             return res.status(500).json({ error: 'Services not initialized' });
@@ -382,7 +433,7 @@ app.post('/api/messages/send', checkServices, async (req, res) => {
             return res.status(500).json({ error: 'Services not initialized' });
         }
         
-        const { templateName, customData } = req.body;
+        const { templateName, customData, imagePath } = req.body;
         if (!templateName) {
             return res.status(400).json({ error: 'Template name is required' });
         }
@@ -392,7 +443,7 @@ app.post('/api/messages/send', checkServices, async (req, res) => {
             return res.status(400).json({ error: 'No contacts to send messages to' });
         }
         
-        const stats = await messageService.sendBatchMessages(contacts, templateName, customData || {});
+        const stats = await messageService.sendBatchMessages(contacts, templateName, customData || {}, imagePath);
         res.json({ success: true, stats });
     } catch (error) {
         logger.error('Error sending messages:', error);
@@ -401,13 +452,13 @@ app.post('/api/messages/send', checkServices, async (req, res) => {
 });
 
 // Send messages to ALL contacts (no filtering by city)
-app.post('/api/messages/send-all', async (req, res) => {
+app.post('/api/messages/send-all', checkServices, async (req, res) => {
     try {
         if (!messageService || !contactService) {
             return res.status(500).json({ error: 'Services not initialized' });
         }
         
-        const { templateName, customData } = req.body;
+        const { templateName, customData, imagePath } = req.body;
         if (!templateName) {
             return res.status(400).json({ error: 'Template name is required' });
         }
@@ -421,7 +472,7 @@ app.post('/api/messages/send-all', async (req, res) => {
             return res.status(400).json({ error: 'No contacts to send messages to' });
         }
         
-        const stats = await messageService.sendBatchMessages(contacts, templateName, customData || {});
+        const stats = await messageService.sendBatchMessages(contacts, templateName, customData || {}, imagePath);
         res.json({ success: true, stats });
     } catch (error) {
         logger.error('Error sending messages to all contacts:', error);
@@ -430,7 +481,7 @@ app.post('/api/messages/send-all', async (req, res) => {
 });
 
 // Pause message sending
-app.post('/api/messages/pause', (req, res) => {
+app.post('/api/messages/pause', checkServices, (req, res) => {
     try {
         if (!messageService) {
             return res.status(500).json({ error: 'Services not initialized' });
@@ -445,7 +496,7 @@ app.post('/api/messages/pause', (req, res) => {
 });
 
 // Resume message sending
-app.post('/api/messages/resume', (req, res) => {
+app.post('/api/messages/resume', checkServices, (req, res) => {
     try {
         if (!messageService) {
             return res.status(500).json({ error: 'Services not initialized' });
@@ -460,7 +511,7 @@ app.post('/api/messages/resume', (req, res) => {
 });
 
 // Clear message queue
-app.post('/api/messages/clear', (req, res) => {
+app.post('/api/messages/clear', checkServices, (req, res) => {
     try {
         if (!messageService) {
             return res.status(500).json({ error: 'Services not initialized' });
@@ -521,28 +572,3 @@ function checkServices(req, res, next) {
     }
     next();
 }
-
-// Apply middleware to API routes that require initialized services
-app.post('/api/contacts/google-sheets', checkServices);
-
-// API endpoint to list sheet names
-app.get('/api/google-sheets/sheets', checkServices, async (req, res) => {
-    try {
-        const { sheetId } = req.query;
-        if (!sheetId) {
-            return res.status(400).json({ success: false, error: 'Google Sheet ID is required' });
-        }
-        const sheetNames = await listSheetNames(sheetId);
-        res.json({ success: true, sheets: sheetNames });
-    } catch (error) {
-        logger.error('Error listing Google Sheet names:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.post('/api/contacts/filter', checkServices);
-app.post('/api/messages/send', checkServices);
-app.post('/api/messages/send-all', checkServices);
-app.post('/api/messages/pause', checkServices);
-app.post('/api/messages/resume', checkServices);
-app.post('/api/messages/clear', checkServices);

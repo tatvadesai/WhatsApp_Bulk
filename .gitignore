@@ -1,30 +1,8 @@
-# Security-sensitive files
-/config.js
-/.env
-/credentials.json
-/service-account.json
-/.wwebjs_auth/
-/.wwebjs_cache/
-
-# Node.js files
-/node_modules/
-/package-lock.json
-npm-debug.log*
-
-# Log files
-/logs/*.log
-
-# Environment files (except example)
-!.env.example
-
-# Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-.DS_Store
-*.log
-
-
-
+node_modules
+.env
+service-account.json
+.wwebjs_auth
+.wwebjs_cache
+auth_data
+logs
+config.jsonservice-account.json
